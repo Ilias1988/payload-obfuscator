@@ -1,5 +1,7 @@
 # 🛡️ Payload Obfuscator — Red Team Evasion & AV Bypass Tool
 
+🌐 **[Live Demo → payload-obfuscator.dev](https://payload-obfuscator.dev/)**
+
 A **free, open-source, browser-based** payload obfuscation tool designed for red team operators, penetration testers, and security researchers. Supports **multi-layer obfuscation** across 5 languages with real-time **entropy analysis** and **detection scoring**.
 
 > ⚠️ **For educational and authorized security testing purposes only.**
