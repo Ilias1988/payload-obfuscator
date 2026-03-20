@@ -89,11 +89,20 @@ function applyVariableRandomization(code) {
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'python')
 
-  const transformed = transformStrings(tokens, (content, quoteChar) => {
+  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
     // Skip triple-quoted strings — never obfuscate
     if (quoteChar === '"""' || quoteChar === "'''") {
       return `${quoteChar}${content}${quoteChar}`
     }
+
+    // b-strings: keep as bytes literal (don't encode)
+    const lowerPrefix = (prefix || '').toLowerCase()
+    if (lowerPrefix === 'b' || lowerPrefix === 'br' || lowerPrefix === 'rb') {
+      return `b"${content}"`
+    }
+
+    // f-strings, r-strings, u-strings: STRIP prefix completely
+    // The obfuscated form doesn't need any prefix (f/r/u are all irrelevant after encoding)
 
     // Unicode → force Base64 via getattr (stealth, no direct attribute access)
     if (hasUnicode(content)) {
@@ -101,7 +110,7 @@ function applyStringEncoding(code) {
       return `getattr(__import__("base64"), "b64decode")("${b64}").decode("utf-8")`
     }
 
-    // ASCII: choose safe method (NO f-strings, getattr for base64)
+    // ASCII: choose safe method (NO f-strings, NO prefixes, getattr for base64)
     const method = Math.floor(Math.random() * 3)
     switch (method) {
       case 0: {

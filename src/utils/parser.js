@@ -42,6 +42,7 @@ export function tokenize(code, language) {
           type: 'string',
           value: stringResult.value,
           quoteChar: stringResult.quoteChar,
+          prefix: stringResult.prefix || '',
           raw: stringResult.raw,
         })
         i = stringResult.end
@@ -88,7 +89,7 @@ export function transformStrings(tokens, transformFn) {
   return tokens.map((token) => {
     if (token.type !== 'string') return token
     if (token.value.length < 2) return token // Skip very short strings
-    const transformed = transformFn(token.value, token.quoteChar)
+    const transformed = transformFn(token.value, token.quoteChar, token.prefix || '')
     return { type: 'code', value: transformed } // Becomes raw code (no quotes needed)
   })
 }
@@ -176,17 +177,55 @@ function tryComment(code, i, language) {
 function tryString(code, i, language) {
   const ch = code[i]
 
-  // Python triple-quoted strings (must check before single quotes)
+  // Python: detect string prefixes (f, r, b, u, fr, rf, br, rb)
   if (language === 'python') {
-    if ((ch === '"' && code[i + 1] === '"' && code[i + 2] === '"') ||
-        (ch === "'" && code[i + 1] === "'" && code[i + 2] === "'")) {
-      const closer = ch.repeat(3)
-      const end = code.indexOf(closer, i + 3)
+    let prefix = ''
+    let si = i // string start index (after prefix)
+    const prefixPatterns = ['fr', 'rf', 'br', 'rb', 'f', 'r', 'b', 'u', 'FR', 'RF', 'BR', 'RB', 'F', 'R', 'B', 'U']
+    for (const p of prefixPatterns) {
+      if (code.substring(i, i + p.length).toLowerCase() === p.toLowerCase() &&
+          (code[i + p.length] === '"' || code[i + p.length] === "'")) {
+        prefix = code.substring(i, i + p.length)
+        si = i + p.length
+        break
+      }
+    }
+
+    const sch = code[si]
+
+    // Triple-quoted strings (must check before single quotes)
+    if ((sch === '"' && code[si + 1] === '"' && code[si + 2] === '"') ||
+        (sch === "'" && code[si + 1] === "'" && code[si + 2] === "'")) {
+      const closer = sch.repeat(3)
+      const end = code.indexOf(closer, si + 3)
       const realEnd = end === -1 ? code.length : end + 3
-      const content = code.substring(i + 3, end === -1 ? code.length : end)
+      const content = code.substring(si + 3, end === -1 ? code.length : end)
       return {
         value: content,
         quoteChar: closer,
+        prefix: prefix,
+        raw: code.substring(i, realEnd),
+        end: realEnd,
+      }
+    }
+
+    // Regular quoted strings with prefix
+    if (prefix && (sch === '"' || sch === "'")) {
+      let j = si + 1
+      while (j < code.length) {
+        if (code[j] === '\\' && j + 1 < code.length) {
+          j += 2
+          continue
+        }
+        if (code[j] === sch) break
+        j++
+      }
+      const realEnd = j + 1
+      const content = code.substring(si + 1, j)
+      return {
+        value: content,
+        quoteChar: sch,
+        prefix: prefix,
         raw: code.substring(i, realEnd),
         end: realEnd,
       }
