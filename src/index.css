@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base Styles ─────────────────────────────── */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #30363d #0a0e14;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #0a0e14;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+  }
+
+  ::selection {
+    background: rgba(239, 68, 68, 0.3);
+    color: #fff;
+  }
+}
+
+/* ── Terminal Glow Effect ────────────────────── */
+@layer components {
+  .terminal-glow {
+    box-shadow:
+      0 0 1px rgba(239, 68, 68, 0.1),
+      0 0 10px rgba(239, 68, 68, 0.05),
+      inset 0 0 30px rgba(0, 0, 0, 0.3);
+  }
+
+  .terminal-header {
+    background: linear-gradient(180deg, #1a1f28 0%, #161b22 100%);
+  }
+
+  .terminal-dot {
+    @apply w-3 h-3 rounded-full;
+  }
+
+  .code-block {
+    @apply font-mono text-sm leading-relaxed;
+    tab-size: 2;
+  }
+
+  /* Entropy meter gradient */
+  .entropy-gradient {
+    background: linear-gradient(90deg,
+      #10b981 0%,
+      #f59e0b 40%,
+      #f97316 65%,
+      #ef4444 100%
+    );
+  }
+
+  /* Scan line animation overlay */
+  .scan-overlay::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(239, 68, 68, 0.4),
+      transparent
+    );
+    animation: scanLine 4s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Language tab active indicator */
+  .tab-active {
+    @apply relative;
+  }
+
+  .tab-active::after {
+    content: '';
+    @apply absolute bottom-0 left-0 right-0 h-0.5 bg-obf-red rounded-full;
+  }
+
+  /* Layer toggle switch */
+  .layer-switch {
+    @apply relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200;
+  }
+
+  .layer-switch-knob {
+    @apply inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200;
+  }
+}
+
+/* ── Utility Classes ─────────────────────────── */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #ef4444, #f97316, #f59e0b);
+  }
+
+  .border-glow {
+    border-color: rgba(239, 68, 68, 0.2);
+  }
+}
