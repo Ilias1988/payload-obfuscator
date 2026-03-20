@@ -40,11 +40,13 @@ export function obfuscateBash(code, layers = []) {
 /* ── Variable Randomization + Command Obfuscation ────────── */
 
 const OBFUSCATABLE_COMMANDS = [
-  'cat', 'curl', 'wget', 'nc', 'ncat', 'bash', 'sh', 'python', 'python3',
-  'perl', 'ruby', 'php', 'nmap', 'chmod', 'mkdir', 'touch', 'rm',
+  'cat', 'curl', 'wget', 'nc', 'ncat', 'netcat', 'bash', 'sh', 'python', 'python3',
+  'perl', 'ruby', 'php', 'nmap', 'chmod', 'chown', 'mkdir', 'touch', 'rm',
   'cp', 'mv', 'find', 'grep', 'awk', 'sed', 'xargs', 'tar', 'gzip',
   'whoami', 'id', 'uname', 'hostname', 'ifconfig', 'ip', 'ss', 'netstat',
   'ps', 'kill', 'pkill', 'crontab', 'dd', 'openssl', 'socat',
+  'systemctl', 'iptables', 'mount', 'umount', 'useradd', 'groupadd',
+  'chattr', 'lsattr', 'tcpdump', 'strace', 'ltrace', 'strings',
 ]
 
 function obfuscateCommand(cmd) {

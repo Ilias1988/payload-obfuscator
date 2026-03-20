@@ -22,6 +22,7 @@ export default function App() {
     analysis,
     clearAll,
     warnings,
+    stealthActive,
   } = useObfuscator()
 
   return (
@@ -76,6 +77,7 @@ export default function App() {
               language={language}
               outputCode={outputCode}
               warnings={warnings}
+              stealthActive={stealthActive}
             />
           </div>
         </div>

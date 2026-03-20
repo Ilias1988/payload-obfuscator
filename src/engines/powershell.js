@@ -13,10 +13,18 @@ import { toBase64 } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
 
+const IEX_STEALTH = '& ($ShellId[1]+$ShellId[13]+\'X\')'
+
 export function obfuscatePowerShell(code, layers = []) {
-  if (!code || code.trim().length === 0) return ''
+  if (!code || code.trim().length === 0) return { code: '', stealthApplied: false }
 
   let result = code
+  let stealthApplied = false
+
+  // FIRST: Global IEX Stealth — replace ALL IEX/Invoke-Expression BEFORE any encoding
+  const stealthResult = applyIEXStealth(result)
+  result = stealthResult.code
+  stealthApplied = stealthResult.applied
 
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
@@ -34,7 +42,41 @@ export function obfuscatePowerShell(code, layers = []) {
     result = applyEncryptionWrapper(result)
   }
 
-  return result
+  return { code: result, stealthApplied }
+}
+
+/* ── Global IEX Stealth (runs FIRST, context-aware) ──────── */
+
+function applyIEXStealth(code) {
+  const iexPatterns = [
+    /\bInvoke-Expression\b/gi,
+    /\bIEX\s*\(/gi,
+    /\biex\s*\(/gi,
+    /\bIEX\b/gi,
+    /\biex\b/gi,
+  ]
+
+  let applied = false
+
+  // Only replace in CODE tokens, never inside strings
+  const result = transformCodeOnly(code, 'powershell', (codeSegment) => {
+    let segment = codeSegment
+    for (const pattern of iexPatterns) {
+      if (pattern.test(segment)) {
+        applied = true
+        // Handle IEX( and iex( — keep the opening paren
+        segment = segment.replace(/\b[Ii][Ee][Xx]\s*\(/g, IEX_STEALTH + ' (')
+        // Handle Invoke-Expression
+        segment = segment.replace(/\bInvoke-Expression\b/gi, IEX_STEALTH)
+        // Handle standalone IEX (not followed by paren, already handled above)
+        segment = segment.replace(/\b[Ii][Ee][Xx]\b(?!\s*\()/g, IEX_STEALTH)
+        break
+      }
+    }
+    return segment
+  })
+
+  return { code: result, applied }
 }
 
 /* ── Variable Randomization (context-aware) ──────────────── */

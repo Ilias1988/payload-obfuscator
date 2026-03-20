@@ -1,8 +1,8 @@
-import { Code, Download, AlertTriangle } from 'lucide-react'
+import { Code, Download, AlertTriangle, ShieldCheck } from 'lucide-react'
 import CopyButton from '../ui/CopyButton'
 import { LANGUAGES } from '../../data/techniques'
 
-export default function OutputPanel({ language, outputCode, warnings = [] }) {
+export default function OutputPanel({ language, outputCode, warnings = [], stealthActive = false }) {
   const langData = LANGUAGES.find((l) => l.id === language)
 
   const handleDownload = () => {
@@ -32,6 +32,12 @@ export default function OutputPanel({ language, outputCode, warnings = [] }) {
               Obfuscated Output
             </span>
           </div>
+          {stealthActive && (
+            <div className="flex items-center gap-1 ml-2 px-1.5 py-0.5 bg-obf-green/10 border border-obf-green/30 rounded animate-pulse">
+              <ShieldCheck size={10} className="text-obf-green" />
+              <span className="text-[9px] text-obf-green font-semibold tracking-wide">STEALTH</span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <CopyButton text={outputCode} />

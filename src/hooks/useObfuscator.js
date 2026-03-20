@@ -21,6 +21,7 @@ export default function useObfuscator() {
   const [outputCode, setOutputCode] = useState('')
   const [activeLayers, setActiveLayers] = useState([])
   const [warnings, setWarnings] = useState([])
+  const [stealthActive, setStealthActive] = useState(false)
 
   const toggleLayer = useCallback((layerId) => {
     setActiveLayers((prev) =>
@@ -37,7 +38,17 @@ export default function useObfuscator() {
     }
 
     try {
-      const result = engine(inputCode, activeLayers)
+      const rawResult = engine(inputCode, activeLayers)
+
+      // PowerShell returns { code, stealthApplied }, others return string
+      let result
+      if (typeof rawResult === 'object' && rawResult.code !== undefined) {
+        result = rawResult.code
+        setStealthActive(rawResult.stealthApplied || false)
+      } else {
+        result = rawResult
+        setStealthActive(false)
+      }
 
       // Validation step: check balanced delimiters
       const validation = validateOutput(result)
@@ -108,5 +119,6 @@ export default function useObfuscator() {
     analysis,
     clearAll,
     warnings,
+    stealthActive,
   }
 }
