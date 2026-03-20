@@ -141,6 +141,22 @@ export const OBFUSCATION_LAYERS = [
     supported: ['powershell', 'python', 'csharp', 'go'],
   },
   {
+    id: 'xorstrings',
+    name: 'XOR String Encryption',
+    icon: '⚔️',
+    description: 'Encrypt each string with random XOR key and just-in-time decryption',
+    impact: 'Eliminates all plaintext strings — defeats signature & heuristic scanners',
+    supported: ['powershell', 'python', 'bash', 'csharp', 'go'],
+  },
+  {
+    id: 'controlflow',
+    name: 'Control Flow Flattening',
+    icon: '🌀',
+    description: 'Flatten code into randomized state-machine switch/while loop',
+    impact: 'Defeats CFG analysis, decompiler pattern recognition, and heuristic engines',
+    supported: ['powershell', 'csharp', 'go'],
+  },
+  {
     id: 'encrypt',
     name: 'Encryption Wrapper',
     icon: '🔒',

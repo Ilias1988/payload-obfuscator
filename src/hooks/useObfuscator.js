@@ -22,6 +22,7 @@ export default function useObfuscator() {
   const [activeLayers, setActiveLayers] = useState([])
   const [warnings, setWarnings] = useState([])
   const [stealthActive, setStealthActive] = useState(false)
+  const [platinumActive, setPlatinumActive] = useState(false)
 
   const toggleLayer = useCallback((layerId) => {
     setActiveLayers((prev) =>
@@ -61,6 +62,11 @@ export default function useObfuscator() {
           'Input contains Unicode/Greek characters. Enable "String Encoding" to safely handle them via Base64.',
         ])
       }
+
+      // Platinum detection
+      setPlatinumActive(
+        activeLayers.includes('xorstrings') || activeLayers.includes('controlflow')
+      )
 
       setOutputCode(result)
     } catch (err) {
@@ -120,5 +126,6 @@ export default function useObfuscator() {
     clearAll,
     warnings,
     stealthActive,
+    platinumActive,
   }
 }

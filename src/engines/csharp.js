@@ -10,9 +10,10 @@
  * - Unicode → force Base64
  */
 
-import { toBase64 } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { applyControlFlowFlattening } from './controlflow'
 
 export function obfuscateCSharp(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -22,8 +23,14 @@ export function obfuscateCSharp(code, layers = []) {
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
   }
+  if (layers.includes('xorstrings')) {
+    result = applyXorStringEncryption(result)
+  }
   if (layers.includes('encode')) {
     result = applyStringEncoding(result)
+  }
+  if (layers.includes('controlflow')) {
+    result = applyControlFlowFlattening(result, 'csharp')
   }
   if (layers.includes('deadcode')) {
     result = applyDeadCodeInjection(result)
@@ -131,6 +138,40 @@ function applyStringEncoding(code) {
   })
 
   return tokensToCode(transformed)
+}
+
+/* ── XOR String Encryption (Platinum) ────────────────────── */
+
+function applyXorStringEncryption(code) {
+  const funcName = '_' + randomFuncName()
+  let helperInjected = false
+  const tokens = tokenize(code, 'csharp')
+
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === '@"') return `@"${content}"`
+    if (quoteChar === "'" && content.length <= 2) return `'${content}'`
+    if (content.length < 3) return `"${content}"`
+
+    const xor = xorEncryptForLanguage(content, 'csharp', funcName)
+    if (!helperInjected) helperInjected = true
+    return xor.inline
+  })
+
+  let result = tokensToCode(transformed)
+  if (helperInjected) {
+    const helper = xorEncryptForLanguage('x', 'csharp', funcName).helper
+    // Insert helper method inside the class (before Main or first method)
+    const classInsert = result.indexOf('{')
+    if (classInsert !== -1) {
+      const secondBrace = result.indexOf('{', classInsert + 1)
+      if (secondBrace !== -1) {
+        result = result.substring(0, secondBrace) + '{\n    ' + helper + '\n' + result.substring(secondBrace + 1)
+      } else {
+        result = result.substring(0, classInsert + 1) + '\n    ' + helper + '\n' + result.substring(classInsert + 1)
+      }
+    }
+  }
+  return result
 }
 
 /* ── Dead Code Injection (safe locations only) ───────────── */

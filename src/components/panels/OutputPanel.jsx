@@ -1,8 +1,8 @@
-import { Code, Download, AlertTriangle, ShieldCheck } from 'lucide-react'
+import { Code, Download, AlertTriangle, ShieldCheck, Crown } from 'lucide-react'
 import CopyButton from '../ui/CopyButton'
 import { LANGUAGES } from '../../data/techniques'
 
-export default function OutputPanel({ language, outputCode, warnings = [], stealthActive = false }) {
+export default function OutputPanel({ language, outputCode, warnings = [], stealthActive = false, platinumActive = false }) {
   const langData = LANGUAGES.find((l) => l.id === language)
 
   const handleDownload = () => {
@@ -32,7 +32,13 @@ export default function OutputPanel({ language, outputCode, warnings = [], steal
               Obfuscated Output
             </span>
           </div>
-          {stealthActive && (
+          {platinumActive && (
+            <div className="flex items-center gap-1 ml-2 px-1.5 py-0.5 bg-blue-500/10 border border-blue-400/30 rounded animate-pulse">
+              <Crown size={10} className="text-blue-400" />
+              <span className="text-[9px] text-blue-400 font-semibold tracking-wide">PLATINUM</span>
+            </div>
+          )}
+          {stealthActive && !platinumActive && (
             <div className="flex items-center gap-1 ml-2 px-1.5 py-0.5 bg-obf-green/10 border border-obf-green/30 rounded animate-pulse">
               <ShieldCheck size={10} className="text-obf-green" />
               <span className="text-[9px] text-obf-green font-semibold tracking-wide">STEALTH</span>

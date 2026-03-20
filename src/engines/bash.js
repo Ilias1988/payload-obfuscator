@@ -9,8 +9,8 @@
  * - Unicode → force Base64
  */
 
-import { toBase64 } from '../utils/encoding'
-import { randomVarName, generateDeadCode, randomXorKey } from '../utils/randomization'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
+import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
 
 export function obfuscateBash(code, layers = []) {
@@ -20,6 +20,9 @@ export function obfuscateBash(code, layers = []) {
 
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
+  }
+  if (layers.includes('xorstrings')) {
+    result = applyXorStringEncryption(result)
   }
   if (layers.includes('encode')) {
     result = applyStringEncoding(result)
@@ -159,6 +162,32 @@ function applyStringEncoding(code) {
   })
 
   return tokensToCode(transformed)
+}
+
+/* ── XOR String Encryption (Platinum) ────────────────────── */
+
+function applyXorStringEncryption(code) {
+  const funcName = '_xd_' + randomVarName('short').toLowerCase()
+  let helperInjected = false
+  const tokens = tokenize(code, 'bash')
+
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === "$'" || quoteChar === "'") {
+      return quoteChar === "'" ? `'${content}'` : `$'${content}'`
+    }
+    if (content.length < 3) return `"${content}"`
+
+    const xor = xorEncryptForLanguage(content, 'bash', funcName)
+    if (!helperInjected) helperInjected = true
+    return xor.inline
+  })
+
+  let result = tokensToCode(transformed)
+  if (helperInjected) {
+    const helper = xorEncryptForLanguage('x', 'bash', funcName).helper
+    result = helper + '\n' + result
+  }
+  return result
 }
 
 /* ── Dead Code Injection ─────────────────────────────────── */

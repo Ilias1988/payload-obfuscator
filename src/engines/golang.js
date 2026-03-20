@@ -8,9 +8,10 @@
  * - Unicode → force Base64
  */
 
-import { toBase64 } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { applyControlFlowFlattening } from './controlflow'
 
 export function obfuscateGo(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -20,8 +21,14 @@ export function obfuscateGo(code, layers = []) {
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
   }
+  if (layers.includes('xorstrings')) {
+    result = applyXorStringEncryption(result)
+  }
   if (layers.includes('encode')) {
     result = applyStringEncoding(result)
+  }
+  if (layers.includes('controlflow')) {
+    result = applyControlFlowFlattening(result, 'go')
   }
   if (layers.includes('deadcode')) {
     result = applyDeadCodeInjection(result)
@@ -104,6 +111,36 @@ function applyStringEncoding(code) {
   })
 
   return tokensToCode(transformed)
+}
+
+/* ── XOR String Encryption (Platinum) ────────────────────── */
+
+function applyXorStringEncryption(code) {
+  const funcName = '_xd' + randomFuncName()
+  let helperInjected = false
+  const tokens = tokenize(code, 'go')
+
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === '`') return '`' + content + '`'
+    if (content.length < 3) return `"${content}"`
+
+    const xor = xorEncryptForLanguage(content, 'go', funcName)
+    if (!helperInjected) helperInjected = true
+    return xor.inline
+  })
+
+  let result = tokensToCode(transformed)
+  if (helperInjected) {
+    const helper = xorEncryptForLanguage('x', 'go', funcName).helper
+    // Insert helper function before func main()
+    const mainIdx = result.indexOf('func main()')
+    if (mainIdx !== -1) {
+      result = result.substring(0, mainIdx) + helper + '\n\n' + result.substring(mainIdx)
+    } else {
+      result = helper + '\n\n' + result
+    }
+  }
+  return result
 }
 
 /* ── Dead Code Injection (safe locations only) ───────────── */

@@ -9,9 +9,10 @@
  * - Dead code only injected at safe locations
  */
 
-import { toBase64 } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { applyControlFlowFlattening } from './controlflow'
 
 const IEX_STEALTH = '& ($ShellId[1]+$ShellId[13]+\'X\')'
 
@@ -29,8 +30,14 @@ export function obfuscatePowerShell(code, layers = []) {
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
   }
+  if (layers.includes('xorstrings')) {
+    result = applyXorStringEncryption(result)
+  }
   if (layers.includes('encode')) {
     result = applyStringEncoding(result)
+  }
+  if (layers.includes('controlflow')) {
+    result = applyControlFlowFlattening(result, 'powershell')
   }
   if (layers.includes('deadcode')) {
     result = applyDeadCodeInjection(result)
@@ -173,6 +180,32 @@ function applyStringEncoding(code) {
   })
 
   return tokensToCode(transformed)
+}
+
+/* ── XOR String Encryption (Platinum) ────────────────────── */
+
+function applyXorStringEncryption(code) {
+  const funcName = randomFuncName()
+  let helperInjected = false
+  const tokens = tokenize(code, 'powershell')
+
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === '@"' || quoteChar === "@'" || quoteChar === "'") {
+      return quoteChar === "'" ? `'${content}'` : `@${quoteChar[1]}${content}${quoteChar[1]}@`
+    }
+    if (content.length < 3) return `"${content}"`
+
+    const xor = xorEncryptForLanguage(content, 'powershell', funcName)
+    if (!helperInjected) helperInjected = true
+    return xor.inline
+  })
+
+  let result = tokensToCode(transformed)
+  if (helperInjected) {
+    const helper = xorEncryptForLanguage('x', 'powershell', funcName).helper
+    result = helper + '\n' + result
+  }
+  return result
 }
 
 /* ── Dead Code Injection (safe locations only) ───────────── */

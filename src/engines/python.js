@@ -9,8 +9,8 @@
  * - Unicode → force Base64
  */
 
-import { toBase64 } from '../utils/encoding'
-import { randomVarName, generateDeadCode, randomXorKey } from '../utils/randomization'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
+import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
 
 export function obfuscatePython(code, layers = []) {
@@ -20,6 +20,9 @@ export function obfuscatePython(code, layers = []) {
 
   if (layers.includes('randomize')) {
     result = applyVariableRandomization(result)
+  }
+  if (layers.includes('xorstrings')) {
+    result = applyXorStringEncryption(result)
   }
   if (layers.includes('encode')) {
     result = applyStringEncoding(result)
@@ -138,6 +141,32 @@ function applyStringEncoding(code) {
   })
 
   return tokensToCode(transformed)
+}
+
+/* ── XOR String Encryption (Platinum) ────────────────────── */
+
+function applyXorStringEncryption(code) {
+  const funcName = '_' + randomVarName('snake_case')
+  let helperInjected = false
+  const tokens = tokenize(code, 'python')
+
+  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
+    if (quoteChar === '"""' || quoteChar === "'''") return `${quoteChar}${content}${quoteChar}`
+    const lp = (prefix || '').toLowerCase()
+    if (lp === 'b' || lp === 'br' || lp === 'rb') return `b"${content}"`
+    if (content.length < 3) return `"${content}"`
+
+    const xor = xorEncryptForLanguage(content, 'python', funcName)
+    if (!helperInjected) helperInjected = true
+    return xor.inline
+  })
+
+  let result = tokensToCode(transformed)
+  if (helperInjected) {
+    const helper = xorEncryptForLanguage('x', 'python', funcName).helper
+    result = helper + '\n' + result
+  }
+  return result
 }
 
 /* ── Dead Code Injection (safe locations only) ───────────── */

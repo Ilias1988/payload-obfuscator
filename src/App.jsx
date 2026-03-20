@@ -23,6 +23,7 @@ export default function App() {
     clearAll,
     warnings,
     stealthActive,
+    platinumActive,
   } = useObfuscator()
 
   return (
@@ -78,6 +79,7 @@ export default function App() {
               outputCode={outputCode}
               warnings={warnings}
               stealthActive={stealthActive}
+              platinumActive={platinumActive}
             />
           </div>
         </div>
