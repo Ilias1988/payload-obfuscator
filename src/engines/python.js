@@ -95,13 +95,13 @@ function applyStringEncoding(code) {
       return `${quoteChar}${content}${quoteChar}`
     }
 
-    // Unicode → force Base64
+    // Unicode → force Base64 (clean, no __import__)
     if (hasUnicode(content)) {
       const b64 = toBase64(content)
-      return `__import__("base64").b64decode("${b64}").decode("utf-8")`
+      return `(lambda b64=__import__("base64"): b64.b64decode("${b64}").decode("utf-8"))()`
     }
 
-    // ASCII: choose safe method (NO f-strings, NO chr() mixing)
+    // ASCII: choose safe method (NO f-strings, NO __import__)
     const method = Math.floor(Math.random() * 2)
     switch (method) {
       case 0: {
@@ -112,9 +112,11 @@ function applyStringEncoding(code) {
         return `b"${hex}".decode()`
       }
       case 1: {
-        // base64 inline
-        const b64 = toBase64(content)
-        return `__import__("base64").b64decode("${b64}").decode()`
+        // bytes.fromhex().decode() — clean, no imports needed
+        const hexStr = Array.from(content)
+          .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+          .join('')
+        return `bytes.fromhex("${hexStr}").decode()`
       }
       default:
         return `"${content}"`
