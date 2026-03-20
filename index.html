@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Primary SEO Meta Tags -->
+    <title>Payload Obfuscator — Red Team Evasion & AV Bypass Tool for Penetration Testing</title>
+    <meta name="description" content="Free online Payload Obfuscator for red teamers and penetration testers. Obfuscate PowerShell, Python, Bash, C#, and Go payloads with multi-layer evasion techniques. Variable randomization, Base64/XOR encoding, entropy analysis, and EDR bypass strategies." />
+    <meta name="keywords" content="payload obfuscator, code obfuscation, red team tools, AV bypass, EDR evasion, PowerShell obfuscation, Python obfuscation, penetration testing, offensive security, payload encoding, variable randomization, entropy analysis, AMSI bypass, defense evasion" />
+    <meta name="author" content="Ilias Georgopoulos" />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#06080c" />
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://payload-obfuscator.dev/" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://payload-obfuscator.dev/" />
+    <meta property="og:title" content="Payload Obfuscator — Red Team Evasion & AV Bypass Tool" />
+    <meta property="og:description" content="Free online Payload Obfuscator for red teamers. Obfuscate payloads with multi-layer evasion techniques including variable randomization, encoding, and entropy analysis." />
+    <meta property="og:site_name" content="Payload Obfuscator" />
+    <meta property="og:image" content="https://payload-obfuscator.dev/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://payload-obfuscator.dev/" />
+    <meta name="twitter:title" content="Payload Obfuscator — Red Team Evasion Tool" />
+    <meta name="twitter:description" content="Obfuscate PowerShell, Python, Bash, C#, and Go payloads with multi-layer evasion. Free online tool for red teams." />
+    <meta name="twitter:image" content="https://payload-obfuscator.dev/og-image.png" />
+    <meta name="twitter:creator" content="@EliotGeo" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon.png" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+    <!-- Structured Data (JSON-LD) is dynamically injected by React (SEOHead component) -->
+    <script type="module" crossorigin src="/assets/index-5E4iYDNF.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C-nG_Lit.css">
+  </head>
+  <body class="bg-dark-950 text-gray-100 antialiased">
+    <div id="root"></div>
+
+    <!-- Fallback SEO content for crawlers that don't execute JavaScript -->
+    <noscript>
+      <div style="max-width:800px;margin:40px auto;padding:20px;color:#c9d1d9;font-family:system-ui,sans-serif;background:#0a0e14;">
+        <h1>Payload Obfuscator — Red Team Evasion &amp; AV Bypass Tool</h1>
+        <p>Free online <strong>Payload Obfuscator</strong> for red teamers and penetration testers. Obfuscate PowerShell, Python, Bash, C#, and Go payloads with multi-layer evasion techniques.</p>
+
+        <h2>Advanced Evasion Techniques &amp; Payload Obfuscation</h2>
+
+        <h3>Understanding Code Obfuscation in Offensive Security</h3>
+        <p>Code obfuscation is a fundamental technique in offensive security that transforms readable source code into a functionally equivalent but significantly harder-to-analyze version. In the context of <strong>red team operations</strong> and <strong>penetration testing</strong>, obfuscation serves as a critical layer of defense evasion — making payloads less detectable by antivirus (AV) engines, Endpoint Detection and Response (EDR) solutions, and manual code review processes.</p>
+        <p>Modern security solutions rely on two primary analysis methods: <strong>static analysis</strong> and <strong>dynamic analysis</strong>. Static analysis examines code without executing it, searching for known malicious signatures, suspicious strings, and dangerous API calls. Dynamic analysis, conversely, executes the code in a controlled sandbox environment, monitoring its runtime behavior for malicious activity such as process injection, network callbacks, or file system modifications.</p>
+
+        <h3>Static vs Dynamic Analysis: Why Obfuscation Matters</h3>
+        <p>Effective payload obfuscation primarily targets static analysis engines. By transforming variable names into randomized strings, encoding string literals with Base64 or XOR operations, and restructuring control flow with dead code insertion, the payload's static signature changes dramatically. This means that signature-based detection — which relies on matching known patterns — fails to identify the obfuscated variant.</p>
+        <p>However, sophisticated EDR solutions increasingly employ behavioral analysis and heuristic detection. These systems monitor what code does at runtime, regardless of how it looks on disk. This is why advanced obfuscation strategies include anti-analysis techniques such as sleep timers (to outlast sandbox timeouts), environment checks (to detect virtual machines), and staged execution (to delay malicious behavior until the payload confirms it is running on a real target).</p>
+
+        <h3>Variable Randomization and Entropy Considerations</h3>
+        <p>Variable randomization replaces meaningful identifiers like <code>$payload</code> or <code>shellcode_buffer</code> with random strings such as <code>$xK7mQ2</code> or <code>aR9vB3n</code>. While this effectively breaks static signatures, it introduces a measurable side effect: increased <strong>Shannon entropy</strong>. Security tools can flag files with abnormally high entropy as potentially packed or encrypted malware. A skilled red teamer balances randomization with natural-looking code patterns to maintain a realistic entropy profile.</p>
+
+        <h3>Multi-Layer Obfuscation Strategy</h3>
+        <p>Professional red team engagements rarely rely on a single obfuscation technique. Instead, operators apply multiple layers: string encoding wraps sensitive literals, variable randomization breaks known identifiers, dead code injection alters control flow graphs, and encryption wrappers add an outer protective layer. Each layer addresses a different detection vector, creating a defense-in-depth approach to evasion. The key is understanding which layers are effective against your specific target's security stack.</p>
+
+        <h3>Ethics and Responsible Use</h3>
+        <p>Payload obfuscation tools exist exclusively for <strong>authorized security testing</strong>, <strong>red team exercises</strong>, and <strong>educational research</strong>. All techniques demonstrated here should only be applied within the scope of a signed Rules of Engagement (RoE) document. Unauthorized use of these techniques against systems you do not own or have explicit permission to test is illegal and unethical. The goal of red teaming is to improve an organization's security posture by identifying gaps before real adversaries exploit them.</p>
+
+        <h3>Supported Languages &amp; Techniques</h3>
+        <ul>
+          <li><strong>PowerShell</strong> — String splitting, Base64 encoding, Invoke-Expression tricks, tick insertion, format operator abuse</li>
+          <li><strong>Python</strong> — exec()/eval() wrapping, base64+zlib compression, chr() encoding, lambda chains</li>
+          <li><strong>Bash</strong> — Variable substitution, hex encoding, eval+base64, IFS manipulation</li>
+          <li><strong>C#</strong> — String.Concat, char arrays, XOR encryption, reflection-based invocation</li>
+          <li><strong>Go</strong> — Byte array payloads, XOR runtime decryption, syscall obfuscation</li>
+        </ul>
+
+        <h3>Features</h3>
+        <ul>
+          <li>Multi-layer obfuscation with stackable techniques</li>
+          <li>Real-time Shannon entropy analysis</li>
+          <li>Detection score estimation</li>
+          <li>Template library with common payload skeletons</li>
+          <li>Before/After size comparison</li>
+        </ul>
+
+        <p><em>For educational and authorized security testing purposes only.</em></p>
+      </div>
+    </noscript>
+  </body>
+</html>
