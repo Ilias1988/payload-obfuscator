@@ -1,11 +1,18 @@
 /**
- * C# Obfuscation Engine
- * Techniques: String.Concat, char arrays, XOR encryption,
- * reflection-based invocation, dead code, encryption wrapper.
+ * C# Obfuscation Engine (v2 — Context-Aware)
+ *
+ * FIXED:
+ * - Obfuscates ONLY content inside string literals ("...")
+ * - Keeps using, method signatures, try/catch, foreach INTACT
+ * - Uses new string(new char[] { ... }) for obfuscation
+ * - Dead code never injected inside class/namespace declarations
+ * - Verbatim strings @"..." preserved as-is
+ * - Unicode → force Base64
  */
 
 import { toBase64 } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
 
 export function obfuscateCSharp(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -31,81 +38,131 @@ export function obfuscateCSharp(code, layers = []) {
   return result
 }
 
+/* ── Variable Randomization (context-aware) ──────────────── */
+
 function applyVariableRandomization(code) {
-  const varPattern = /\b(?:var|int|string|byte\[\]|bool|double|float|long|char|object|Stream|StreamReader|StreamWriter|TcpClient|Process|IntPtr)\s+([a-zA-Z_][a-zA-Z0-9_]*)/g
   const reserved = new Set([
     'Main', 'args', 'Console', 'System', 'String', 'Math', 'Array',
     'Environment', 'Process', 'Thread', 'Marshal', 'IntPtr', 'Zero',
+    'Encoding', 'Convert', 'Assembly', 'Type', 'Activator', 'File',
+    'Directory', 'Path', 'Stream', 'StreamReader', 'StreamWriter',
+    'TcpClient', 'WebClient', 'HttpClient', 'Task', 'Stopwatch',
+    'StringBuilder', 'Byte', 'Int32', 'Int64', 'Boolean', 'Object',
+    'Exception', 'EventArgs', 'true', 'false', 'null', 'void',
+    'static', 'public', 'private', 'protected', 'internal', 'new',
+    'class', 'struct', 'interface', 'enum', 'namespace', 'using',
+    'return', 'if', 'else', 'for', 'foreach', 'while', 'do', 'switch',
+    'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw',
+    'var', 'int', 'string', 'bool', 'byte', 'double', 'float', 'long',
+    'char', 'object', 'typeof', 'sizeof', 'is', 'as', 'in', 'out', 'ref',
   ])
 
+  // Collect local variable declarations from CODE tokens only
+  const tokens = tokenize(code, 'csharp')
   const varMap = {}
-  let match
-  while ((match = varPattern.exec(code)) !== null) {
-    const varName = match[1]
-    if (!reserved.has(varName) && !varMap[varName]) {
-      varMap[varName] = randomVarName('camelCase')
+
+  for (const token of tokens) {
+    if (token.type !== 'code') continue
+    const varPattern = /\b(?:var|int|string|byte\[\]|bool|double|float|long|char|object)\s+([a-zA-Z_][a-zA-Z0-9_]*)/g
+    let match
+    while ((match = varPattern.exec(token.value)) !== null) {
+      const varName = match[1]
+      if (!reserved.has(varName) && !varMap[varName]) {
+        varMap[varName] = randomVarName('camelCase')
+      }
     }
   }
 
-  let result = code
-  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
-  for (const varName of sortedVars) {
-    const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
-    result = result.replace(regex, varMap[varName])
-  }
+  if (Object.keys(varMap).length === 0) return code
 
-  return result
+  return transformCodeOnly(code, 'csharp', (codeSegment) => {
+    let result = codeSegment
+    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+    for (const varName of sortedVars) {
+      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      result = result.replace(regex, varMap[varName])
+    }
+    return result
+  })
 }
 
+/* ── String Encoding (ONLY inside quotes) ────────────────── */
+
 function applyStringEncoding(code) {
-  const stringPattern = /"([^"]{3,})"/g
+  const tokens = tokenize(code, 'csharp')
 
-  return code.replace(stringPattern, (match, content) => {
-    const method = Math.floor(Math.random() * 3)
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    // Skip verbatim strings @"..." — never obfuscate
+    if (quoteChar === '@"') {
+      return `@"${content}"`
+    }
 
+    // Skip char literals
+    if (quoteChar === "'" && content.length <= 2) {
+      return `'${content}'`
+    }
+
+    // Unicode → force Base64 with Encoding.UTF8
+    if (hasUnicode(content)) {
+      const b64 = toBase64(content)
+      return `System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("${b64}"))`
+    }
+
+    // ASCII: use new string(new char[] { ... })
+    const method = Math.floor(Math.random() * 2)
     switch (method) {
       case 0: {
-        // String.Concat with char casts
+        // new string(new char[] { (char)72, (char)101, ... })
         const chars = Array.from(content)
           .map((c) => `(char)${c.charCodeAt(0)}`)
           .join(', ')
         return `new string(new char[] {${chars}})`
       }
       case 1: {
-        // Byte array to string
+        // Byte array: Encoding.ASCII.GetString(new byte[] { 0xHH, ... })
         const bytes = Array.from(content)
           .map((c) => '0x' + c.charCodeAt(0).toString(16).padStart(2, '0'))
           .join(', ')
         return `System.Text.Encoding.ASCII.GetString(new byte[] {${bytes}})`
       }
-      case 2: {
-        // String.Concat with substrings
-        const chunkSize = Math.max(2, Math.ceil(content.length / 4))
-        const parts = []
-        for (let i = 0; i < content.length; i += chunkSize) {
-          parts.push(`"${content.substring(i, i + chunkSize)}"`)
-        }
-        return `string.Concat(${parts.join(', ')})`
-      }
       default:
-        return match
+        return `"${content}"`
     }
   })
+
+  return tokensToCode(transformed)
 }
+
+/* ── Dead Code Injection (safe locations only) ───────────── */
 
 function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
   const result = []
+  let braceDepth = 0
 
   for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    // Track brace depth to know if we're inside a method body
+    for (const ch of trimmed) {
+      if (ch === '{') braceDepth++
+      if (ch === '}') braceDepth--
+    }
+
     result.push(lines[i])
-    if (i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0 && lines[i].trim() !== '{' && lines[i].trim() !== '}') {
-      result.push('        ' + generateDeadCode('csharp'))
+
+    // Only inject inside method bodies (depth >= 2: namespace + class + method)
+    if (i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0 && braceDepth >= 2) {
+      if (isSafeForInjection(lines[i], 'csharp')) {
+        const indent = lines[i].match(/^(\s*)/)?.[1] || '        '
+        result.push(indent + generateDeadCode('csharp'))
+      }
     }
   }
 
   return result.join('\n')
 }
+
+/* ── Anti-Analysis ───────────────────────────────────────── */
 
 function applyAntiAnalysis(code) {
   const v1 = randomVarName('camelCase')
@@ -120,7 +177,7 @@ function applyAntiAnalysis(code) {
         ${v2}.Stop();
         if (${v2}.ElapsedMilliseconds < ${Math.floor(sleepMs * 0.8)}) return;`
 
-  // Insert after first '{' in Main
+  // Insert after first '{' in Main method
   const mainIndex = code.indexOf('static void Main')
   if (mainIndex !== -1) {
     const braceIndex = code.indexOf('{', mainIndex)
@@ -131,6 +188,8 @@ function applyAntiAnalysis(code) {
 
   return '// Anti-analysis\n' + antiAnalysis + '\n' + code
 }
+
+/* ── Encryption Wrapper ──────────────────────────────────── */
 
 function applyEncryptionWrapper(code) {
   const key = randomXorKey(16)
@@ -144,26 +203,27 @@ function applyEncryptionWrapper(code) {
   const dataVar = randomVarName('camelCase')
 
   return `using System;
-using System.Reflection;
 using System.Text;
 
-class ${className} {
+class ${className}
+{
     static byte[] ${keyVar} = new byte[] {${key.join(', ')}};
     static byte[] ${dataVar} = new byte[] {${xorEncoded.join(', ')}};
 
-    static string ${methodName}(byte[] d, byte[] k) {
+    static string ${methodName}(byte[] d, byte[] k)
+    {
         byte[] r = new byte[d.Length];
         for (int i = 0; i < d.Length; i++)
             r[i] = (byte)(d[i] ^ k[i % k.Length]);
         return Encoding.ASCII.GetString(r);
     }
 
-    static void Main() {
+    static void Main()
+    {
         string decoded = Encoding.UTF8.GetString(
             Convert.FromBase64String(${methodName}(${dataVar}, ${keyVar}))
         );
-        // Runtime compilation/execution would go here
-        Console.WriteLine("// Decrypted payload ready for compilation");
+        Console.WriteLine("// Decrypted payload ready");
         Console.WriteLine(decoded);
     }
 }

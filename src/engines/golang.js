@@ -1,11 +1,16 @@
 /**
- * Go Obfuscation Engine
- * Techniques: Byte array payloads, XOR runtime decryption,
- * string building, variable randomization, dead code.
+ * Go Obfuscation Engine (v2 — Context-Aware)
+ *
+ * FIXED:
+ * - Safe byte slice encoding (no inline func() trick)
+ * - Context-aware: string encoding only inside literals
+ * - Dead code only at safe locations
+ * - Unicode → force Base64
  */
 
 import { toBase64 } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
 
 export function obfuscateGo(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -31,63 +36,77 @@ export function obfuscateGo(code, layers = []) {
   return result
 }
 
+/* ── Variable Randomization (context-aware) ──────────────── */
+
 function applyVariableRandomization(code) {
-  const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:=/g
   const reserved = new Set([
     'main', 'func', 'var', 'const', 'type', 'struct', 'interface',
     'package', 'import', 'return', 'if', 'else', 'for', 'range',
     'switch', 'case', 'default', 'break', 'continue', 'go', 'chan',
     'defer', 'select', 'nil', 'true', 'false', 'err', 'fmt',
     'os', 'net', 'exec', 'io', 'strings', 'strconv', 'bytes',
+    'runtime', 'time', 'encoding', 'base64', 'make', 'len', 'cap',
+    'append', 'copy', 'delete', 'print', 'println', 'string', 'byte',
+    'int', 'int64', 'float64', 'bool', 'error', 'map', 'slice',
   ])
 
+  const tokens = tokenize(code, 'go')
   const varMap = {}
-  let match
-  while ((match = varPattern.exec(code)) !== null) {
-    const varName = match[1]
-    if (!reserved.has(varName) && !varMap[varName] && varName.length > 1 && varName !== '_') {
-      varMap[varName] = randomVarName('camelCase')
+
+  for (const token of tokens) {
+    if (token.type !== 'code') continue
+    const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:=/g
+    let match
+    while ((match = varPattern.exec(token.value)) !== null) {
+      const varName = match[1]
+      if (!reserved.has(varName) && !varMap[varName] && varName.length > 1 && varName !== '_') {
+        varMap[varName] = randomVarName('camelCase')
+      }
     }
   }
 
-  let result = code
-  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
-  for (const varName of sortedVars) {
-    const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
-    result = result.replace(regex, varMap[varName])
-  }
+  if (Object.keys(varMap).length === 0) return code
 
-  return result
-}
-
-function applyStringEncoding(code) {
-  const stringPattern = /"([^"]{3,})"/g
-
-  return code.replace(stringPattern, (match, content) => {
-    const method = Math.floor(Math.random() * 2)
-
-    switch (method) {
-      case 0: {
-        // Byte slice to string
-        const bytes = Array.from(content)
-          .map((c) => c.charCodeAt(0))
-          .join(', ')
-        return `string([]byte{${bytes}})`
-      }
-      case 1: {
-        // String builder
-        const funcName = randomFuncName()
-        // Inline approach
-        const chars = Array.from(content)
-          .map((c) => `${c.charCodeAt(0)}`)
-          .join(', ')
-        return `func() string { b := []byte{${chars}}; return string(b) }()`
-      }
-      default:
-        return match
+  return transformCodeOnly(code, 'go', (codeSegment) => {
+    let result = codeSegment
+    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+    for (const varName of sortedVars) {
+      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      result = result.replace(regex, varMap[varName])
     }
+    return result
   })
 }
+
+/* ── String Encoding (safe byte slice) ───────────────────── */
+
+function applyStringEncoding(code) {
+  const tokens = tokenize(code, 'go')
+
+  const transformed = transformStrings(tokens, (content, quoteChar) => {
+    // Skip backtick strings (raw strings) — never obfuscate
+    if (quoteChar === '`') {
+      return '`' + content + '`'
+    }
+
+    // Unicode → Base64
+    if (hasUnicode(content)) {
+      const b64 = toBase64(content)
+      // This requires encoding/base64 import
+      return `func() string { d, _ := base64.StdEncoding.DecodeString("${b64}"); return string(d) }()`
+    }
+
+    // ASCII: safe byte slice
+    const bytes = Array.from(content)
+      .map((c) => c.charCodeAt(0))
+      .join(', ')
+    return `string([]byte{${bytes}})`
+  })
+
+  return tokensToCode(transformed)
+}
+
+/* ── Dead Code Injection (safe locations only) ───────────── */
 
 function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
@@ -95,13 +114,17 @@ function applyDeadCodeInjection(code) {
 
   for (let i = 0; i < lines.length; i++) {
     result.push(lines[i])
-    if (i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0 && !lines[i].trim().startsWith('import') && !lines[i].trim().startsWith('package')) {
-      result.push('\t' + generateDeadCode('go'))
+    if (i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0) {
+      if (isSafeForInjection(lines[i], 'go')) {
+        result.push('\t' + generateDeadCode('go'))
+      }
     }
   }
 
   return result.join('\n')
 }
+
+/* ── Anti-Analysis ───────────────────────────────────────── */
 
 function applyAntiAnalysis(code) {
   const v1 = randomVarName('camelCase')
@@ -119,16 +142,11 @@ function applyAntiAnalysis(code) {
 \t\tos.Exit(0)
 \t}`
 
-  // Add runtime and time imports if not present
   let result = code
   if (!result.includes('"runtime"')) {
-    result = result.replace(
-      /import \(/,
-      'import (\n\t"runtime"\n\t"time"'
-    )
+    result = result.replace(/import \(/, 'import (\n\t"runtime"\n\t"time"')
   }
 
-  // Insert after func main() {
   const mainIndex = result.indexOf('func main()')
   if (mainIndex !== -1) {
     const braceIndex = result.indexOf('{', mainIndex)
@@ -139,6 +157,8 @@ function applyAntiAnalysis(code) {
 
   return result
 }
+
+/* ── Encryption Wrapper ──────────────────────────────────── */
 
 function applyEncryptionWrapper(code) {
   const key = randomXorKey(16)

@@ -5,6 +5,7 @@ import { obfuscateBash } from '../engines/bash'
 import { obfuscateCSharp } from '../engines/csharp'
 import { obfuscateGo } from '../engines/golang'
 import { calculateEntropy, getEntropyClassification, calculateDetectionScore } from '../utils/entropy'
+import { validateOutput, containsUnicode } from '../utils/validator'
 
 const ENGINE_MAP = {
   powershell: obfuscatePowerShell,
@@ -19,6 +20,7 @@ export default function useObfuscator() {
   const [inputCode, setInputCode] = useState('')
   const [outputCode, setOutputCode] = useState('')
   const [activeLayers, setActiveLayers] = useState([])
+  const [warnings, setWarnings] = useState([])
 
   const toggleLayer = useCallback((layerId) => {
     setActiveLayers((prev) =>
@@ -30,14 +32,34 @@ export default function useObfuscator() {
     const engine = ENGINE_MAP[language]
     if (!engine || !inputCode.trim()) {
       setOutputCode('')
+      setWarnings([])
       return
     }
-    const result = engine(inputCode, activeLayers)
-    setOutputCode(result)
+
+    try {
+      const result = engine(inputCode, activeLayers)
+
+      // Validation step: check balanced delimiters
+      const validation = validateOutput(result)
+      setWarnings(validation.warnings)
+
+      // Unicode safety warning
+      if (containsUnicode(inputCode) && !activeLayers.includes('encode')) {
+        setWarnings((prev) => [
+          ...prev,
+          'Input contains Unicode/Greek characters. Enable "String Encoding" to safely handle them via Base64.',
+        ])
+      }
+
+      setOutputCode(result)
+    } catch (err) {
+      setOutputCode(`// Obfuscation error: ${err.message}`)
+      setWarnings([`Engine error: ${err.message}`])
+    }
   }, [language, inputCode, activeLayers])
 
   const analysis = useMemo(() => {
-    if (!outputCode) {
+    if (!outputCode || outputCode.startsWith('// Obfuscation error')) {
       return {
         inputEntropy: calculateEntropy(inputCode),
         inputEntropyClass: getEntropyClassification(calculateEntropy(inputCode)),
@@ -69,6 +91,7 @@ export default function useObfuscator() {
   const clearAll = useCallback(() => {
     setInputCode('')
     setOutputCode('')
+    setWarnings([])
   }, [])
 
   return {
@@ -84,5 +107,6 @@ export default function useObfuscator() {
     obfuscate,
     analysis,
     clearAll,
+    warnings,
   }
 }

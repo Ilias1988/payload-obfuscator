@@ -1,8 +1,8 @@
-import { Code, Download } from 'lucide-react'
+import { Code, Download, AlertTriangle } from 'lucide-react'
 import CopyButton from '../ui/CopyButton'
 import { LANGUAGES } from '../../data/techniques'
 
-export default function OutputPanel({ language, outputCode }) {
+export default function OutputPanel({ language, outputCode, warnings = [] }) {
   const langData = LANGUAGES.find((l) => l.id === language)
 
   const handleDownload = () => {
@@ -68,6 +68,18 @@ export default function OutputPanel({ language, outputCode }) {
           </div>
         )}
       </div>
+
+      {/* Validation Warnings */}
+      {warnings.length > 0 && (
+        <div className="border-t border-obf-amber/20 bg-obf-amber/5 px-3 py-2 space-y-1">
+          {warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px] text-obf-amber">
+              <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+              <span>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

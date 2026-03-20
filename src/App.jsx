@@ -21,6 +21,7 @@ export default function App() {
     obfuscate,
     analysis,
     clearAll,
+    warnings,
   } = useObfuscator()
 
   return (
@@ -74,6 +75,7 @@ export default function App() {
             <OutputPanel
               language={language}
               outputCode={outputCode}
+              warnings={warnings}
             />
           </div>
         </div>
