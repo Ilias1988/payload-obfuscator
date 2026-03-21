@@ -132,13 +132,13 @@ export function generateDeadCode(language) {
     }
     case 'python': {
       const snippets = [
-        `import time; _${varName} = time.time()`,
+        `_${varName} = __import__("time").time()`,
         `_${varName} = {"timeout": ${num % 60}, "retries": ${(num % 5) + 1}}`,
-        `_${varName} = os.getpid() if hasattr(os, "getpid") else ${num}`,
-        `_${varName} = len(sys.argv) if "sys" in dir() else 0`,
-        `import hashlib; _${varName} = hashlib.md5(b"${num}").hexdigest()[:8]`,
+        `_${varName} = __import__("os").getpid()`,
+        `_${varName} = len(__import__("sys").argv) if hasattr(__import__("sys"), "argv") else 0`,
+        `_${varName} = __import__("hashlib").md5(b"${num}").hexdigest()[:8]`,
         `_${varName} = [x for x in range(${num % 10})]`,
-        `try:\n    _${varName} = os.path.exists("/tmp")\nexcept Exception:\n    pass`,
+        `try:\n    _${varName} = __import__("os").path.exists("/tmp")\nexcept Exception:\n    pass`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]
     }
