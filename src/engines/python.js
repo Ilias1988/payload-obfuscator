@@ -71,38 +71,85 @@ function applyVariableRandomization(code) {
     'KeyError', 'IndexError', 'AttributeError', 'IOError', 'OSError',
   ])
 
-  // Collect variable assignments from CODE tokens only
+  function isRenamable(name) {
+    return !reserved.has(name) && name.length > 1 &&
+           !name.startsWith('__') && !/^[A-Z_]+$/.test(name)
+  }
+
+  // ── Phase 1: Collect all variable definitions from CODE tokens ──
   const tokens = tokenize(code, 'python')
   const varMap = {}
 
   for (const token of tokens) {
     if (token.type !== 'code') continue
-    // Match: varname = (but NOT ==)
-    // Match standalone assignments only (NOT obj.attr = ...)
+
+    // Pattern 1: varname = (but NOT ==, NOT obj.attr =)
     const varPattern = /(?<!\.)(?<!\w)\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=[^=]/g
     let match
     while ((match = varPattern.exec(token.value)) !== null) {
-      const varName = match[1]
-      if (!reserved.has(varName) && !varMap[varName] && varName.length > 1 &&
-          !varName.startsWith('__') && !/^[A-Z_]+$/.test(varName)) {
-        varMap[varName] = randomVarName('snake_case')
-      }
+      const v = match[1]
+      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
+    }
+
+    // Pattern 2: "as varName" (with/except blocks)
+    const asPattern = /\bas\s+([a-zA-Z_][a-zA-Z0-9_]*)\b/g
+    while ((match = asPattern.exec(token.value)) !== null) {
+      const v = match[1]
+      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
+    }
+
+    // Pattern 3: "for varName in" (loop variables)
+    const forPattern = /\bfor\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\b/g
+    while ((match = forPattern.exec(token.value)) !== null) {
+      const v = match[1]
+      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
     }
   }
 
   if (Object.keys(varMap).length === 0) return code
 
-  // Replace ONLY in code tokens
-  return transformCodeOnly(code, 'python', (codeSegment) => {
-    let result = codeSegment
-    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+
+  // Helper: rename vars in a text segment
+  function renameVarsIn(text) {
+    let result = text
     for (const varName of sortedVars) {
-      // Negative lookbehind: don't rename after dot (obj.method stays intact)
       const regex = new RegExp('(?<!\\.)\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
       result = result.replace(regex, varMap[varName])
     }
     return result
+  }
+
+  // ── Phase 2: Replace in CODE tokens + F-STRING tokens ──
+  const result = tokens.map((token) => {
+    if (token.type === 'code') {
+      return { ...token, value: renameVarsIn(token.value) }
+    }
+
+    // F-STRING: rename {varName} inside interpolation expressions
+    if (token.type === 'string' && (token.prefix || '').toLowerCase().includes('f')) {
+      let newContent = token.value
+      for (const varName of sortedVars) {
+        // Match {varName}, {varName:fmt}, {varName.attr}, {varName[idx]}
+        const fRegex = new RegExp(
+          '(\\{)' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\b[^}]*\\})',
+          'g'
+        )
+        newContent = newContent.replace(fRegex, '$1' + varMap[varName] + '$2')
+      }
+      // Rebuild raw with updated content
+      const newRaw = (token.prefix || '') + token.quoteChar + newContent + token.quoteChar
+      return { ...token, value: newContent, raw: newRaw }
+    }
+
+    return token
   })
+
+  // Reconstruct code from tokens
+  return result.map((t) => {
+    if (t.type === 'string') return t.raw || `${t.prefix || ''}${t.quoteChar}${t.value}${t.quoteChar}`
+    return t.value
+  }).join('')
 }
 
 /* ── Encode a single static Python text segment ──────────── */
