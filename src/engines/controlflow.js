@@ -306,6 +306,11 @@ export function applyControlFlowFlattening(code, language) {
     return code
   }
 
+  // ── C# SPECIAL: Method-body-only flattening ──
+  if (language === 'csharp') {
+    return applyCSharpMethodBodyCFF(code)
+  }
+
   const { preamble, body } = extractPreambleAndBody(code, language)
   const blocks = splitIntoBlocks(body, language)
 
@@ -330,9 +335,6 @@ export function applyControlFlowFlattening(code, language) {
     case 'powershell':
       cffBody = generatePowerShellCFF(stateVar, initialState, exitState, shuffledCases)
       break
-    case 'csharp':
-      cffBody = generateCSharpCFF(stateVar, initialState, exitState, shuffledCases)
-      break
     case 'go':
       cffBody = generateGoCFF(stateVar, initialState, exitState, shuffledCases)
       break
@@ -342,6 +344,121 @@ export function applyControlFlowFlattening(code, language) {
 
   // Reassemble: preamble + CFF body
   return preamble.join('\n') + '\n' + cffBody
+}
+
+/* ══════════════════════════════════════════════════════════════
+ *  C# METHOD-BODY-ONLY CFF
+ *  Preserves namespace/class/method structure, only flattens
+ *  statements inside method bodies.
+ * ══════════════════════════════════════════════════════════════ */
+
+/**
+ * Detect C# method signatures
+ */
+const CS_METHOD_SIG = /^\s*(public|private|protected|internal|static|\[|\s)*\s*(void|int|string|bool|byte|Task|async|var|object|double|float|long|char)\s+\w+\s*\(/
+
+function applyCSharpMethodBodyCFF(code) {
+  const lines = code.split('\n')
+  const result = []
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+
+    // Detect method signature (or static void Main)
+    const isMethodSig = CS_METHOD_SIG.test(line) || /^\s*static\s+void\s+Main\s*\(/.test(line)
+
+    if (isMethodSig) {
+      // Collect the signature line(s) + opening brace
+      const methodHeader = []
+      methodHeader.push(line)
+      i++
+
+      // Find the opening { (may be on same line or next)
+      let braceDepth = countBracesDelta(line)
+      if (braceDepth === 0) {
+        // Opening brace on next line
+        while (i < lines.length) {
+          methodHeader.push(lines[i])
+          braceDepth += countBracesDelta(lines[i])
+          i++
+          if (braceDepth > 0) break
+        }
+      } else {
+        i = i // brace was on same line
+      }
+
+      const methodDepth = braceDepth // typically 1
+
+      // Collect method body lines until braceDepth returns to 0
+      const bodyLines = []
+      while (i < lines.length) {
+        const delta = countBracesDelta(lines[i])
+        braceDepth += delta
+
+        if (braceDepth < methodDepth) {
+          // This is the closing } of the method
+          break
+        }
+
+        bodyLines.push(lines[i])
+        i++
+      }
+
+      // Try to flatten the body
+      const blocks = splitIntoBlocks(bodyLines, 'csharp')
+
+      if (blocks.length >= 3) {
+        // Flatten!
+        const stateVar = randomVarName('short')
+        const states = generateStateNumbers(blocks.length)
+        const exitState = states[states.length - 1]
+        const cases = blocks.map((block, idx) => ({
+          state: states[idx],
+          code: block,
+          nextState: idx < blocks.length - 1 ? states[idx + 1] : exitState,
+        }))
+        const shuffledCases = shuffle(cases)
+        const initialState = states[0]
+
+        // Add method header
+        result.push(...methodHeader)
+        // Add CFF inside the method (indented)
+        const indent = (methodHeader[0].match(/^(\s*)/)?.[1] || '') + '    '
+        result.push(`${indent}int ${stateVar} = ${initialState};`)
+        result.push(`${indent}while (true) {`)
+        result.push(`${indent}    switch (${stateVar}) {`)
+        for (const c of shuffledCases) {
+          result.push(`${indent}        case ${c.state}:`)
+          for (const cl of c.code.split('\n')) {
+            result.push(`${indent}            ${cl}`)
+          }
+          result.push(`${indent}            ${stateVar} = ${c.nextState}; break;`)
+        }
+        result.push(`${indent}        case ${exitState}: goto _exit;`)
+        result.push(`${indent}    }`)
+        result.push(`${indent}}`)
+        result.push(`${indent}_exit:;`)
+      } else {
+        // Too few blocks — keep body as-is
+        result.push(...methodHeader)
+        result.push(...bodyLines)
+      }
+
+      // Add the closing brace of the method
+      if (i < lines.length) {
+        result.push(lines[i])
+        i++
+      }
+    } else {
+      // Non-method line (using, namespace, class, closing braces) — keep as-is
+      result.push(line)
+      i++
+    }
+  }
+
+  return result.join('\n')
 }
 
 /* ══════════════════════════════════════════════════════════════
