@@ -478,19 +478,6 @@ function generatePowerShellCFF(stateVar, initialState, exitState, cases) {
   return output
 }
 
-function generateCSharpCFF(stateVar, initialState, exitState, cases) {
-  let output = `int ${stateVar} = ${initialState};\nwhile (true) {\n    switch (${stateVar}) {\n`
-
-  for (const c of cases) {
-    const indented = c.code.split('\n').map(l => '            ' + l).join('\n')
-    output += `        case ${c.state}:\n${indented}\n            ${stateVar} = ${c.nextState}; break;\n`
-  }
-
-  output += `        case ${exitState}: goto _exit;\n`
-  output += `    }\n}\n_exit:;`
-  return output
-}
-
 function generateGoCFF(stateVar, initialState, exitState, cases) {
   let output = `${stateVar} := ${initialState}\nfor {\n    switch ${stateVar} {\n`
 

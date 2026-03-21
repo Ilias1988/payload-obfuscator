@@ -242,6 +242,7 @@ function goWrapperXorB64(code) {
   const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
   const fn = randomFuncName()
   const kv = randomVarName('camelCase'), dv = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
 
   const inits = goShuf([
     `\t${kv} := []byte{${key.join(', ')}}`,
@@ -269,8 +270,8 @@ func main() {
 ${inits.join('\n')}
 ${goJunk()}
 
-\t${randomVarName('camelCase')}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${kv}))
-\tfmt.Println(string(${randomVarName('camelCase')}))
+\t${rv}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${kv}))
+\tfmt.Println(string(${rv}))
 }
 `
 }
@@ -318,6 +319,7 @@ function goWrapperByteRot(code) {
   const fn = randomFuncName()
   const dv = randomVarName('camelCase'), nv = randomVarName('camelCase')
   const rv = randomVarName('camelCase')
+  const pv = randomVarName('camelCase')
 
   const inits = goShuf([
     `\t${dv} := []byte{${rot.join(', ')}}`,
@@ -346,8 +348,8 @@ func main() {
 ${inits.join('\n')}
 ${goJunk()}
 
-\t${randomVarName('camelCase')}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${nv}))
-\tfmt.Println(string(${randomVarName('camelCase')}))
+\t${pv}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${nv}))
+\tfmt.Println(string(${pv}))
 }
 `
 }

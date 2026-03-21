@@ -31,6 +31,25 @@ A **free, open-source, browser-based** payload obfuscation tool designed for red
 | 6 | **Control Flow Flattening** | 🌀 | Flatten code into randomized state-machine (while/switch) |
 | 7 | **Encryption Wrapper** | 🔒 | Wrap entire payload in XOR envelope with runtime decrypt |
 
+### 🔬 v5.2 Atomic — Production-Grade Python Engine
+
+**F-String Deconstruction (v5.0):**
+- Parser tokenizes Python f-strings into static + interpolation segments
+- `f"Hello {name}"` → `encodedHello + str(name)` (variables never encoded)
+- `splitPythonFString()` handles `{expr}`, `{{` escapes, `{var:.2f}` format specs
+- Works with both String Encoding and XOR String Encryption layers
+
+**Dependency Safety (v5.1):**
+- All dead code snippets use `__import__("module")` syntax
+- Zero `NameError` crashes — no assumed global imports
+- `os.getpid()` → `__import__("os").getpid()`
+
+**Atomic Mapping Sync (v5.2):**
+- 2-phase variable randomization: collect → rename (CODE + f-string tokens)
+- `{varName}` inside f-strings renamed consistently with definitions
+- New capture patterns: `as varName` (with/except), `for var in` (loops)
+- 100% rename accuracy across all Python constructs
+
 ### 💎 v4.1 Diamond — Advanced Logic Obfuscation
 
 **XOR String Encryption:**
@@ -160,14 +179,18 @@ Payload-Obfuscator/
 | v3.1 | Gold Fix | Python f-string prefix detection fix |
 | v4.0 | Platinum | XOR String Encryption, Control Flow Flattening, Platinum badge |
 | v4.1 | 💎 Diamond | Scope-aware CFF rewrite (brace counting, atomic try/catch, safe mode) |
+| v4.5 | Stealth | Polymorphic encryption wrappers (4 methods), stealth exec |
+| v5.0 | 🔬 Stable | F-string deconstruction, context-aware parser, encodePyStatic |
+| v5.1 | SafeDeps | Dead code `__import__()` — zero NameError crashes |
+| v5.2 | AtomicMap | F-string var rename sync, as/for capture, 2-phase randomization |
 
 ---
 
-## 📄 License
+## � License
 
 MIT License — See [LICENSE](LICENSE) for details.
 
-## 👤 Author
+## �👤 Author
 
 **Ilias Georgopoulos**
 

@@ -69,7 +69,7 @@ export function randomFuncName() {
 export function randomXorKey(length = 8) {
   const key = []
   for (let i = 0; i < length; i++) {
-    key.push(Math.floor(Math.random() * 256))
+    key.push(1 + Math.floor(Math.random() * 254))
   }
   return key
 }

@@ -365,6 +365,7 @@ function csWrapperXorB64(code) {
   const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
   const cn = randomFuncName(), mn = randomFuncName()
   const kv = randomVarName('camelCase'), dv = randomVarName('camelCase')
+  const pv = randomVarName('camelCase')
 
   const fieldOrder = csShuf([
     `    static byte[] ${kv} = new byte[] {${key.join(', ')}};`,
@@ -393,10 +394,10 @@ ${csLoopJunk()}
     {
 ${csJunk()}
 ${csJunk()}
-        string ${randomVarName('camelCase')} = Encoding.UTF8.GetString(
+        string ${pv} = Encoding.UTF8.GetString(
             Convert.FromBase64String(${mn}(${dv}, ${kv}))
         );
-        Console.WriteLine(${randomVarName('camelCase')});
+        Console.WriteLine(${pv});
     }
 }
 `

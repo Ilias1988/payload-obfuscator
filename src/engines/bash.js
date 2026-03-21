@@ -286,12 +286,12 @@ function shufArr(arr) {
 
 function stealthEval(decodedExpr) {
   const methods = [
-    // bash -c subprocess
-    () => `bash -c "${decodedExpr}"`,
-    // source from stdin
-    () => `source /dev/stdin <<< "${decodedExpr}"`,
-    // printf + bash pipe
-    () => `printf '%s' "${decodedExpr}" | bash`,
+    // eval direct (safest — no nested quoting issues)
+    () => `eval "${decodedExpr}"`,
+    // printf + bash pipe (single-quoted to avoid nested double-quote issues)
+    () => `printf '%s' '${decodedExpr.replace(/'/g, "'\\''")}'  | bash`,
+    // bash -c with escaped inner quotes
+    () => `bash -c "$(echo '${decodedExpr.replace(/'/g, "'\\''")}')"`,
   ]
   return methods[Math.floor(Math.random() * methods.length)]()
 }
