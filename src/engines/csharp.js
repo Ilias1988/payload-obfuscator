@@ -66,6 +66,15 @@ function applyVariableRandomization(code) {
     'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw',
     'var', 'int', 'string', 'bool', 'byte', 'double', 'float', 'long',
     'char', 'object', 'typeof', 'sizeof', 'is', 'as', 'in', 'out', 'ref',
+    // .NET methods (dot-notation targets)
+    'ToString', 'GetType', 'Equals', 'GetHashCode', 'Write', 'WriteLine',
+    'Read', 'ReadLine', 'Close', 'Dispose', 'Sleep', 'Start', 'Stop',
+    'Invoke', 'Load', 'Parse', 'TryParse', 'Split', 'Join', 'Replace',
+    'Trim', 'Contains', 'Length', 'Count', 'Add', 'Remove', 'Clear',
+    'ToArray', 'ToList', 'Copy', 'Format', 'Substring', 'StartsWith',
+    'EndsWith', 'IndexOf', 'Insert', 'Append', 'GetBytes', 'GetString',
+    'FromBase64String', 'ToBase64String', 'GetProcAddress', 'LoadLibrary',
+    'VirtualProtect', 'EntryPoint', 'GetModules', 'SetValue', 'GetField',
   ])
 
   // Collect local variable declarations from CODE tokens only
@@ -92,7 +101,7 @@ function applyVariableRandomization(code) {
   const renameVarsInText = (text) => {
     let result = text
     for (const varName of sortedVars) {
-      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      const regex = new RegExp('(?<!\\.)\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
       result = result.replace(regex, varMap[varName])
     }
     return result

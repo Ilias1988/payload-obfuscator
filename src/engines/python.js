@@ -44,6 +44,7 @@ export function obfuscatePython(code, layers = []) {
 
 function applyVariableRandomization(code) {
   const reserved = new Set([
+    // Keywords & builtins
     'import', 'from', 'as', 'def', 'class', 'return', 'if', 'else', 'elif',
     'while', 'for', 'in', 'try', 'except', 'finally', 'with', 'pass', 'break',
     'continue', 'and', 'or', 'not', 'is', 'None', 'True', 'False', 'lambda',
@@ -53,6 +54,21 @@ function applyVariableRandomization(code) {
     'yield', 'del', 'global', 'nonlocal', 'assert', 'raise', 'async', 'await',
     'bytes', 'map', 'filter', 'zip', 'enumerate', 'sorted', 'reversed',
     'base64', 'time', 'struct', 'ctypes', 'threading', 'multiprocessing',
+    // Library methods (dot-notation targets)
+    'connect', 'send', 'recv', 'write', 'read', 'close', 'append', 'extend',
+    'join', 'split', 'strip', 'replace', 'encode', 'decode', 'format',
+    'lower', 'upper', 'startswith', 'endswith', 'sleep', 'sqrt', 'exit',
+    'wait', 'communicate', 'popen', 'call', 'check_output', 'getaddrinfo',
+    'bind', 'listen', 'accept', 'makefile', 'fileno', 'settimeout',
+    'setsockopt', 'gethostname', 'gethostbyname', 'keys', 'values', 'items',
+    'pop', 'get', 'update', 'copy', 'clear', 'remove', 'insert', 'index',
+    'count', 'sort', 'reverse', 'seek', 'tell', 'flush', 'readline',
+    'readlines', 'writelines', 'getattr', 'setattr', 'hasattr', 'isinstance',
+    'issubclass', 'compile', 'chr', 'ord', 'hex', 'bin', 'oct', 'abs',
+    'round', 'min', 'max', 'sum', 'any', 'all', 'next', 'iter', 'hash',
+    'id', 'dir', 'vars', 'locals', 'globals', 'property', 'staticmethod',
+    'classmethod', 'object', 'Exception', 'ValueError', 'TypeError',
+    'KeyError', 'IndexError', 'AttributeError', 'IOError', 'OSError',
   ])
 
   // Collect variable assignments from CODE tokens only
@@ -62,7 +78,8 @@ function applyVariableRandomization(code) {
   for (const token of tokens) {
     if (token.type !== 'code') continue
     // Match: varname = (but NOT ==)
-    const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=[^=]/g
+    // Match standalone assignments only (NOT obj.attr = ...)
+    const varPattern = /(?<!\.)(?<!\w)\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=[^=]/g
     let match
     while ((match = varPattern.exec(token.value)) !== null) {
       const varName = match[1]
@@ -80,7 +97,8 @@ function applyVariableRandomization(code) {
     let result = codeSegment
     const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
     for (const varName of sortedVars) {
-      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      // Negative lookbehind: don't rename after dot (obj.method stays intact)
+      const regex = new RegExp('(?<!\\.)\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
       result = result.replace(regex, varMap[varName])
     }
     return result

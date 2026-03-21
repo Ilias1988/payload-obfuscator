@@ -98,6 +98,17 @@ function applyVariableRandomization(code) {
     'PSScriptRoot', 'MyInvocation', 'ErrorActionPreference', '_',
     'env', 'Host', 'PWD', 'HOME', 'PSVersionTable', 'LASTEXITCODE',
     'Error', 'Matches', 'ForEach', 'switch', 'process', 'begin', 'end',
+    // .NET / PS methods (dot-notation targets)
+    'GetType', 'GetField', 'SetValue', 'ToString', 'GetBytes', 'GetString',
+    'FromBase64String', 'ToBase64String', 'Invoke', 'Create', 'Load',
+    'Start', 'Stop', 'Write', 'Read', 'Close', 'Dispose', 'Sleep',
+    'Copy', 'Move', 'Split', 'Join', 'Replace', 'Trim', 'Contains',
+    'StartsWith', 'EndsWith', 'Length', 'Count', 'Add', 'Remove',
+    'Clear', 'ToArray', 'ToList', 'Format', 'Assembly', 'GetModules',
+    'LoadWithPartialName', 'GetProcAddress', 'VirtualProtect',
+    'LoadLibrary', 'GetHINSTANCE', 'InvokeCommand', 'InvokeScript',
+    'AddScript', 'GetEnumerator', 'MoveNext', 'Current', 'Value',
+    'Name', 'FullName', 'BaseType', 'IsPublic', 'Substring',
   ])
 
   // First pass: collect variables from CODE tokens only

@@ -55,6 +55,15 @@ function applyVariableRandomization(code) {
     'runtime', 'time', 'encoding', 'base64', 'make', 'len', 'cap',
     'append', 'copy', 'delete', 'print', 'println', 'string', 'byte',
     'int', 'int64', 'float64', 'bool', 'error', 'map', 'slice',
+    // Dot-notation library methods
+    'Println', 'Printf', 'Sprintf', 'Fprintf', 'Fatal', 'Fatalf',
+    'Error', 'Write', 'Read', 'Close', 'Sleep', 'Dial', 'Listen',
+    'Accept', 'Split', 'Join', 'Replace', 'Contains', 'TrimSpace',
+    'Atoi', 'Itoa', 'Marshal', 'Unmarshal', 'Decode', 'Encode',
+    'DecodeString', 'EncodeToString', 'StdEncoding', 'Now', 'Since',
+    'Exit', 'Getenv', 'Setenv', 'NumCPU', 'GOOS', 'Command', 'Run',
+    'Output', 'Start', 'Wait', 'Stdin', 'Stdout', 'Stderr', 'NewReader',
+    'ReadString', 'WriteString', 'Flush', 'Scan', 'String', 'Bytes',
   ])
 
   const tokens = tokenize(code, 'go')
@@ -78,7 +87,7 @@ function applyVariableRandomization(code) {
     let result = codeSegment
     const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
     for (const varName of sortedVars) {
-      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      const regex = new RegExp('(?<!\\.)\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
       result = result.replace(regex, varMap[varName])
     }
     return result
