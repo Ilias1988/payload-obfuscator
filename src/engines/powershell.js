@@ -186,14 +186,14 @@ function encodeStaticPS(text) {
   if (!text) return ''
   const resolved = resolveEscapes(text)
   if (hasUnicode(resolved)) {
-    return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}"))`
+    return `([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}")))`
   }
   const method = Math.floor(Math.random() * 2)
   if (method === 0) {
     const chars = Array.from(resolved).map(c => `[char]0x${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('+')
     return `(${chars})`
   }
-  return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}"))`
+  return `([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}")))`
 }
 
 /* ── String Encoding (interpolation-aware, Unicode-safe) ─── */
@@ -380,7 +380,7 @@ function ${fv}($d, $k) {
 ${psLoopJunk(iv)}
         $${rv} += [byte]($d[$${iv}] -bxor $k[$${iv} % $k.Length])
     }
-    return [System.Text.Encoding]::ASCII.GetString($${rv})
+    return [System.Text.Encoding]::ASCII.GetString([byte[]]$${rv})
 }
 
 ${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${kv})))`)}

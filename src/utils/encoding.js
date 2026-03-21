@@ -77,7 +77,7 @@ export function xorEncryptForLanguage(str, language, decryptFuncName = '_xd') {
       return {
         inline: `(${decryptFuncName} @(${dataArr}) @(${keyArr}))`,
         needsHelper: true,
-        helper: `function ${decryptFuncName}($d,$k){$r=@();for($i=0;$i-lt$d.Length;$i++){$r+=[byte]($d[$i]-bxor$k[$i%$k.Length])};[System.Text.Encoding]::UTF8.GetString($r)}`,
+        helper: `function ${decryptFuncName}($d,$k){$r=@();for($i=0;$i-lt$d.Length;$i++){$r+=[byte]($d[$i]-bxor$k[$i%$k.Length])};[System.Text.Encoding]::UTF8.GetString([byte[]]$r)}`,
       }
     }
     case 'python': {
