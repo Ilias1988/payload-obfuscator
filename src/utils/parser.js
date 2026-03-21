@@ -249,6 +249,26 @@ function tryString(code, i, language) {
     }
   }
 
+  // C# interpolated strings $"..."
+  if (language === 'csharp' && ch === '$' && code[i + 1] === '"') {
+    let j = i + 2
+    const escapeChar = '\\'
+    while (j < code.length) {
+      if (code[j] === escapeChar && j + 1 < code.length) { j += 2; continue }
+      if (code[j] === '"') break
+      j++
+    }
+    const realEnd = j + 1
+    const content = code.substring(i + 2, j)
+    return {
+      value: content,
+      quoteChar: '$"',
+      prefix: '$',
+      raw: code.substring(i, realEnd),
+      end: realEnd,
+    }
+  }
+
   // C# verbatim strings @"..."
   if (language === 'csharp' && ch === '@' && code[i + 1] === '"') {
     let j = i + 2
@@ -332,6 +352,215 @@ function tryString(code, i, language) {
  */
 export function hasUnicode(str) {
   return /[^\x00-\x7F]/.test(str)
+}
+
+/**
+ * Check if a string contains variable interpolation
+ * @param {string} content - String content (without quotes)
+ * @param {string} language
+ * @returns {boolean}
+ */
+export function hasInterpolation(content, language) {
+  switch (language) {
+    case 'powershell':
+      // $var, ${var}, $(expr)
+      return /\$[a-zA-Z_{\(]/.test(content)
+    case 'bash':
+      // $var, ${var}, $(cmd), `cmd`
+      return /\$[a-zA-Z_{\(]/.test(content) || /`[^`]+`/.test(content)
+    case 'csharp':
+      // {varName} inside interpolated $"..." strings
+      return /\{[a-zA-Z_][^}]*\}/.test(content)
+    default:
+      return false
+  }
+}
+
+/**
+ * Split an interpolated string into static text and variable segments.
+ * Only encode static segments; leave variable references intact.
+ *
+ * @param {string} content - String content (without quotes)
+ * @param {string} language
+ * @returns {{ type: 'static' | 'var', value: string }[]}
+ */
+export function splitInterpolatedString(content, language) {
+  const segments = []
+  let i = 0
+
+  switch (language) {
+    case 'powershell':
+      return splitPowerShellInterpolation(content)
+    case 'bash':
+      return splitBashInterpolation(content)
+    case 'csharp':
+      return splitCSharpInterpolation(content)
+    default:
+      return [{ type: 'static', value: content }]
+  }
+}
+
+/* ── PowerShell interpolation: $var, ${var}, $(expr) ─────── */
+
+function splitPowerShellInterpolation(content) {
+  const segments = []
+  let i = 0
+  let staticBuf = ''
+
+  while (i < content.length) {
+    if (content[i] === '`' && i + 1 < content.length) {
+      // Escaped character — keep as static
+      staticBuf += content[i] + content[i + 1]
+      i += 2
+      continue
+    }
+
+    if (content[i] === '$') {
+      // Flush static buffer
+      if (staticBuf) { segments.push({ type: 'static', value: staticBuf }); staticBuf = '' }
+
+      if (content[i + 1] === '(') {
+        // $(expression) — find matching paren
+        let depth = 1
+        let j = i + 2
+        while (j < content.length && depth > 0) {
+          if (content[j] === '(') depth++
+          if (content[j] === ')') depth--
+          j++
+        }
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else if (content[i + 1] === '{') {
+        // ${varName}
+        const end = content.indexOf('}', i + 2)
+        const j = end === -1 ? content.length : end + 1
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else if (/[a-zA-Z_]/.test(content[i + 1] || '')) {
+        // $varName
+        let j = i + 1
+        while (j < content.length && /[a-zA-Z0-9_]/.test(content[j])) j++
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else {
+        // Lone $ — keep as static
+        staticBuf += '$'
+        i++
+      }
+    } else {
+      staticBuf += content[i]
+      i++
+    }
+  }
+
+  if (staticBuf) segments.push({ type: 'static', value: staticBuf })
+  return segments
+}
+
+/* ── Bash interpolation: $var, ${var}, $(cmd), `cmd` ─────── */
+
+function splitBashInterpolation(content) {
+  const segments = []
+  let i = 0
+  let staticBuf = ''
+
+  while (i < content.length) {
+    if (content[i] === '\\' && i + 1 < content.length) {
+      staticBuf += content[i] + content[i + 1]
+      i += 2
+      continue
+    }
+
+    if (content[i] === '$') {
+      if (staticBuf) { segments.push({ type: 'static', value: staticBuf }); staticBuf = '' }
+
+      if (content[i + 1] === '(') {
+        // $(command)
+        let depth = 1
+        let j = i + 2
+        while (j < content.length && depth > 0) {
+          if (content[j] === '(') depth++
+          if (content[j] === ')') depth--
+          j++
+        }
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else if (content[i + 1] === '{') {
+        // ${varName}
+        const end = content.indexOf('}', i + 2)
+        const j = end === -1 ? content.length : end + 1
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else if (/[a-zA-Z_]/.test(content[i + 1] || '')) {
+        // $varName
+        let j = i + 1
+        while (j < content.length && /[a-zA-Z0-9_]/.test(content[j])) j++
+        segments.push({ type: 'var', value: content.substring(i, j) })
+        i = j
+      } else {
+        staticBuf += '$'
+        i++
+      }
+    } else if (content[i] === '`') {
+      // `command` backtick substitution
+      if (staticBuf) { segments.push({ type: 'static', value: staticBuf }); staticBuf = '' }
+      const end = content.indexOf('`', i + 1)
+      const j = end === -1 ? content.length : end + 1
+      segments.push({ type: 'var', value: content.substring(i, j) })
+      i = j
+    } else {
+      staticBuf += content[i]
+      i++
+    }
+  }
+
+  if (staticBuf) segments.push({ type: 'static', value: staticBuf })
+  return segments
+}
+
+/* ── C# interpolation: {varName}, {expr} inside $"..." ──── */
+
+function splitCSharpInterpolation(content) {
+  const segments = []
+  let i = 0
+  let staticBuf = ''
+
+  while (i < content.length) {
+    if (content[i] === '{' && content[i + 1] === '{') {
+      // Escaped {{ → literal {
+      staticBuf += '{'
+      i += 2
+      continue
+    }
+    if (content[i] === '}' && content[i + 1] === '}') {
+      // Escaped }} → literal }
+      staticBuf += '}'
+      i += 2
+      continue
+    }
+
+    if (content[i] === '{') {
+      if (staticBuf) { segments.push({ type: 'static', value: staticBuf }); staticBuf = '' }
+      // Find matching }
+      let depth = 1
+      let j = i + 1
+      while (j < content.length && depth > 0) {
+        if (content[j] === '{') depth++
+        if (content[j] === '}') depth--
+        j++
+      }
+      // Extract the expression inside {} (without braces)
+      const expr = content.substring(i + 1, j - 1)
+      segments.push({ type: 'var', value: expr })
+      i = j
+    } else {
+      staticBuf += content[i]
+      i++
+    }
+  }
+
+  if (staticBuf) segments.push({ type: 'static', value: staticBuf })
+  return segments
 }
 
 /**

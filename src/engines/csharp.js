@@ -12,7 +12,7 @@
 
 import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
 
 export function obfuscateCSharp(code, layers = []) {
@@ -93,64 +93,96 @@ function applyVariableRandomization(code) {
   })
 }
 
-/* ── String Encoding (ONLY inside quotes) ────────────────── */
+/* ── Encode a single static C# text segment ─────────────── */
+
+function encodeStaticCS(text) {
+  if (!text) return ''
+  if (hasUnicode(text)) {
+    return `System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("${toBase64(text)}"))`
+  }
+  const method = Math.floor(Math.random() * 2)
+  if (method === 0) {
+    const chars = Array.from(text).map(c => `(char)${c.charCodeAt(0)}`).join(', ')
+    return `new string(new char[] {${chars}})`
+  }
+  const bytes = Array.from(text).map(c => '0x' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(', ')
+  return `System.Text.Encoding.ASCII.GetString(new byte[] {${bytes}})`
+}
+
+/* ── String Encoding (interpolation-aware) ───────────────── */
 
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'csharp')
 
-  const transformed = transformStrings(tokens, (content, quoteChar) => {
-    // Skip verbatim strings @"..." — never obfuscate
-    if (quoteChar === '@"') {
-      return `@"${content}"`
+  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
+    if (quoteChar === '@"') return `@"${content}"`
+    if (quoteChar === "'" && content.length <= 2) return `'${content}'`
+
+    // C# interpolated string $"..." → String.Format(encoded, vars...)
+    if (quoteChar === '$"' || prefix === '$') {
+      if (hasInterpolation(content, 'csharp')) {
+        const segments = splitInterpolatedString(content, 'csharp')
+        const vars = []
+        let formatStr = ''
+        for (const seg of segments) {
+          if (seg.type === 'var') {
+            formatStr += `{${vars.length}}`
+            vars.push(seg.value) // raw expression e.g. "numberA"
+          } else {
+            formatStr += seg.value
+          }
+        }
+        const encodedFormat = encodeStaticCS(formatStr)
+        return `string.Format(${encodedFormat}, ${vars.join(', ')})`
+      }
+      // No interpolation in $"..." — encode as regular string
+      return encodeStaticCS(content)
     }
 
-    // Skip char literals
-    if (quoteChar === "'" && content.length <= 2) {
-      return `'${content}'`
-    }
-
-    // Unicode → force Base64 with Encoding.UTF8
+    // Regular string — no interpolation possible, encode entire
     if (hasUnicode(content)) {
-      const b64 = toBase64(content)
-      return `System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("${b64}"))`
+      return `System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("${toBase64(content)}"))`
     }
-
-    // ASCII: use new string(new char[] { ... })
-    const method = Math.floor(Math.random() * 2)
-    switch (method) {
-      case 0: {
-        // new string(new char[] { (char)72, (char)101, ... })
-        const chars = Array.from(content)
-          .map((c) => `(char)${c.charCodeAt(0)}`)
-          .join(', ')
-        return `new string(new char[] {${chars}})`
-      }
-      case 1: {
-        // Byte array: Encoding.ASCII.GetString(new byte[] { 0xHH, ... })
-        const bytes = Array.from(content)
-          .map((c) => '0x' + c.charCodeAt(0).toString(16).padStart(2, '0'))
-          .join(', ')
-        return `System.Text.Encoding.ASCII.GetString(new byte[] {${bytes}})`
-      }
-      default:
-        return `"${content}"`
-    }
+    return encodeStaticCS(content)
   })
 
   return tokensToCode(transformed)
 }
 
-/* ── XOR String Encryption (Platinum) ────────────────────── */
+/* ── XOR String Encryption (interpolation-aware) ─────────── */
 
 function applyXorStringEncryption(code) {
   const funcName = '_' + randomFuncName()
   let helperInjected = false
   const tokens = tokenize(code, 'csharp')
 
-  const transformed = transformStrings(tokens, (content, quoteChar) => {
+  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
     if (quoteChar === '@"') return `@"${content}"`
     if (quoteChar === "'" && content.length <= 2) return `'${content}'`
-    if (content.length < 3) return `"${content}"`
+    if (content.length < 3) return quoteChar === '$"' ? `$"${content}"` : `"${content}"`
+
+    // Interpolated $"..." → String.Format(XOR_encoded, vars...)
+    if (quoteChar === '$"' || prefix === '$') {
+      if (hasInterpolation(content, 'csharp')) {
+        const segments = splitInterpolatedString(content, 'csharp')
+        const vars = []
+        let formatStr = ''
+        for (const seg of segments) {
+          if (seg.type === 'var') {
+            formatStr += `{${vars.length}}`
+            vars.push(seg.value)
+          } else {
+            formatStr += seg.value
+          }
+        }
+        if (formatStr.length >= 3) {
+          const xor = xorEncryptForLanguage(formatStr, 'csharp', funcName)
+          if (!helperInjected) helperInjected = true
+          return `string.Format(${xor.inline}, ${vars.join(', ')})`
+        }
+        return `$"${content}"`
+      }
+    }
 
     const xor = xorEncryptForLanguage(content, 'csharp', funcName)
     if (!helperInjected) helperInjected = true
@@ -160,7 +192,6 @@ function applyXorStringEncryption(code) {
   let result = tokensToCode(transformed)
   if (helperInjected) {
     const helper = xorEncryptForLanguage('x', 'csharp', funcName).helper
-    // Insert helper method inside the class (before Main or first method)
     const classInsert = result.indexOf('{')
     if (classInsert !== -1) {
       const secondBrace = result.indexOf('{', classInsert + 1)

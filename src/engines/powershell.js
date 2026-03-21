@@ -11,7 +11,7 @@
 
 import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
 
 const IEX_STEALTH = '& ($ShellId[1]+$ShellId[13]+\'X\')'
@@ -126,57 +126,49 @@ function applyVariableRandomization(code) {
   })
 }
 
-/* ── String Encoding (context-aware, Unicode-safe) ───────── */
+/* ── Encode a single static text segment for PowerShell ──── */
+
+function encodeStaticPS(text) {
+  if (!text) return ''
+  if (hasUnicode(text)) {
+    return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(text)}"))`
+  }
+  const method = Math.floor(Math.random() * 2)
+  if (method === 0) {
+    const chars = Array.from(text).map(c => `[char]0x${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('+')
+    return `(${chars})`
+  }
+  return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(text)}"))`
+}
+
+/* ── String Encoding (interpolation-aware, Unicode-safe) ─── */
 
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'powershell')
 
   const transformed = transformStrings(tokens, (content, quoteChar) => {
-    // Skip here-strings — return unchanged
+    // Skip here-strings
     if (quoteChar === '@"' || quoteChar === "@'") {
       return `@${quoteChar[1]}${content}${quoteChar[1]}@`
     }
-
-    // Skip single-quoted strings (PowerShell literal strings)
+    // Skip single-quoted (literal)
     if (quoteChar === "'") {
       return `'${content}'`
     }
 
-    // Unicode detected → force Base64
-    if (hasUnicode(content)) {
-      const b64 = toBase64(content)
-      return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${b64}"))`
+    // Check for variable interpolation
+    if (hasInterpolation(content, 'powershell')) {
+      const segments = splitInterpolatedString(content, 'powershell')
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return seg.value // Leave $var intact
+        if (seg.value.length === 0) return ''
+        return encodeStaticPS(seg.value)
+      }).filter(p => p.length > 0)
+      return `(${parts.join(' + ')})`
     }
 
-    // ASCII content — choose safe method
-    const method = Math.floor(Math.random() * 3)
-    switch (method) {
-      case 0: {
-        // [char]0xHH concatenation
-        const chars = Array.from(content)
-          .map((c) => `[char]0x${c.charCodeAt(0).toString(16).padStart(2, '0')}`)
-          .join('+')
-        return `(${chars})`
-      }
-      case 1: {
-        // Format operator: ("{0}{1}" -f "part1","part2")
-        const chunkSize = Math.max(2, Math.ceil(content.length / 4))
-        const parts = []
-        for (let i = 0; i < content.length; i += chunkSize) {
-          parts.push(content.substring(i, i + chunkSize))
-        }
-        const formatStr = parts.map((_, i) => `{${i}}`).join('')
-        const args = parts.map((p) => `"${p}"`).join(',')
-        return `("${formatStr}" -f ${args})`
-      }
-      case 2: {
-        // Base64 decode
-        const b64 = toBase64(content)
-        return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${b64}"))`
-      }
-      default:
-        return `"${content}"`
-    }
+    // No interpolation — encode entire string
+    return encodeStaticPS(content)
   })
 
   return tokensToCode(transformed)
@@ -194,6 +186,19 @@ function applyXorStringEncryption(code) {
       return quoteChar === "'" ? `'${content}'` : `@${quoteChar[1]}${content}${quoteChar[1]}@`
     }
     if (content.length < 3) return `"${content}"`
+
+    // Interpolation-aware XOR: only encrypt static segments
+    if (hasInterpolation(content, 'powershell')) {
+      const segments = splitInterpolatedString(content, 'powershell')
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return seg.value
+        if (seg.value.length < 3) return `"${seg.value}"`
+        const xor = xorEncryptForLanguage(seg.value, 'powershell', funcName)
+        if (!helperInjected) helperInjected = true
+        return xor.inline
+      }).filter(p => p.length > 0)
+      return `(${parts.join(' + ')})`
+    }
 
     const xor = xorEncryptForLanguage(content, 'powershell', funcName)
     if (!helperInjected) helperInjected = true

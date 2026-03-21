@@ -11,7 +11,7 @@
 
 import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 
 export function obfuscateBash(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -112,59 +112,50 @@ function applyVariableRandomization(code) {
   })
 }
 
-/* ── String Encoding (native Linux only) ─────────────────── */
+/* ── Encode a single static text segment for Bash ────────── */
+
+function encodeStaticBash(text) {
+  if (!text) return ''
+  if (hasUnicode(text)) {
+    return `$(echo "${toBase64(text)}" | base64 -d)`
+  }
+  const method = Math.floor(Math.random() * 2)
+  if (method === 0) {
+    const hex = Array.from(text).map(c => '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+    return `$(printf '${hex}')`
+  }
+  return `$(echo "${toBase64(text)}" | base64 -d)`
+}
+
+/* ── String Encoding (interpolation-aware, native Linux) ─── */
 
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'bash')
 
   const transformed = transformStrings(tokens, (content, quoteChar) => {
-    // Skip ANSI-C strings ($'...')
-    if (quoteChar === "$'") {
-      return `$'${content}'`
+    if (quoteChar === "$'") return `$'${content}'`
+    if (quoteChar === "'") return `'${content}'`
+
+    // Interpolation-aware: split into static + variable segments
+    if (hasInterpolation(content, 'bash')) {
+      const segments = splitInterpolatedString(content, 'bash')
+      // Build: "encoded_static$var encoded_static2"
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return seg.value // Leave $var, $(cmd) intact
+        if (seg.value.length === 0) return ''
+        return encodeStaticBash(seg.value)
+      }).filter(p => p.length > 0)
+      return parts.join('')
     }
 
-    // Skip single-quoted (literal in bash)
-    if (quoteChar === "'") {
-      return `'${content}'`
-    }
-
-    // Unicode → force Base64
-    if (hasUnicode(content)) {
-      const b64 = toBase64(content)
-      return `$(echo "${b64}" | base64 -d)`
-    }
-
-    // ASCII: choose native bash method
-    const method = Math.floor(Math.random() * 3)
-    switch (method) {
-      case 0: {
-        // printf hex: $(printf '\xHH\xHH')
-        const hex = Array.from(content)
-          .map((c) => '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0'))
-          .join('')
-        return `$(printf '${hex}')`
-      }
-      case 1: {
-        // Octal: $'\NNN\NNN'
-        const octal = Array.from(content)
-          .map((c) => '\\' + c.charCodeAt(0).toString(8).padStart(3, '0'))
-          .join('')
-        return `$'${octal}'`
-      }
-      case 2: {
-        // Base64 inline
-        const b64 = toBase64(content)
-        return `$(echo "${b64}" | base64 -d)`
-      }
-      default:
-        return `"${content}"`
-    }
+    // No interpolation — encode entire string
+    return encodeStaticBash(content)
   })
 
   return tokensToCode(transformed)
 }
 
-/* ── XOR String Encryption (Platinum) ────────────────────── */
+/* ── XOR String Encryption (interpolation-aware) ─────────── */
 
 function applyXorStringEncryption(code) {
   const funcName = '_xd_' + randomVarName('short').toLowerCase()
@@ -176,6 +167,19 @@ function applyXorStringEncryption(code) {
       return quoteChar === "'" ? `'${content}'` : `$'${content}'`
     }
     if (content.length < 3) return `"${content}"`
+
+    // Interpolation-aware XOR
+    if (hasInterpolation(content, 'bash')) {
+      const segments = splitInterpolatedString(content, 'bash')
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return seg.value
+        if (seg.value.length < 3) return seg.value
+        const xor = xorEncryptForLanguage(seg.value, 'bash', funcName)
+        if (!helperInjected) helperInjected = true
+        return xor.inline
+      }).filter(p => p.length > 0)
+      return parts.join('')
+    }
 
     const xor = xorEncryptForLanguage(content, 'bash', funcName)
     if (!helperInjected) helperInjected = true
