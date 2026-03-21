@@ -195,17 +195,50 @@ function applyAntiAnalysis(code) {
   return result
 }
 
-/* ── Encryption Wrapper ──────────────────────────────────── */
+/* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
+
+function goShuf(arr) {
+  const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }; return a
+}
+
+function goJunk() {
+  const pool = [
+    () => `\t_ = ${Math.floor(Math.random()*999)} * ${Math.floor(Math.random()*99)} + ${Math.floor(Math.random()*9999)}`,
+    () => `\t_ = len("${Array.from({length: 6}, () => String.fromCharCode(97 + Math.floor(Math.random()*26))).join('')}")`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function goLoopJunk() {
+  const pool = [
+    () => `\t\t_ = i * ${3 + Math.floor(Math.random()*17)} + ${Math.floor(Math.random()*255)}`,
+    () => `\t\t_ = i ^ ${Math.floor(Math.random()*0xFF)}`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
 
 function applyEncryptionWrapper(code) {
+  const m = Math.floor(Math.random() * 3)
+  switch (m) {
+    case 0: return goWrapperXorB64(code)
+    case 1: return goWrapperMultiXor(code)
+    case 2: return goWrapperByteRot(code)
+    default: return goWrapperXorB64(code)
+  }
+}
+
+function goWrapperXorB64(code) {
   const key = randomXorKey(16)
   const b64 = toBase64(code)
-  const xorEncoded = Array.from(b64)
-    .map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+  const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+  const fn = randomFuncName()
+  const kv = randomVarName('camelCase'), dv = randomVarName('camelCase')
 
-  const funcName = randomFuncName()
-  const keyVar = randomVarName('camelCase')
-  const dataVar = randomVarName('camelCase')
+  const inits = goShuf([
+    `\t${kv} := []byte{${key.join(', ')}}`,
+    `\t${dv} := []byte{${xorData.join(', ')}}`,
+    goJunk(),
+  ])
 
   return `package main
 
@@ -214,22 +247,98 @@ import (
 \t"fmt"
 )
 
-func ${funcName}(data []byte, key []byte) string {
+func ${fn}(data []byte, key []byte) string {
 \tresult := make([]byte, len(data))
 \tfor i := 0; i < len(data); i++ {
+${goLoopJunk()}
 \t\tresult[i] = data[i] ^ key[i%len(key)]
 \t}
 \treturn string(result)
 }
 
 func main() {
-\t${keyVar} := []byte{${key.join(', ')}}
-\t${dataVar} := []byte{${xorEncoded.join(', ')}}
+${inits.join('\n')}
+${goJunk()}
 
-\tdecoded := ${funcName}(${dataVar}, ${keyVar})
-\tpayload, _ := base64.StdEncoding.DecodeString(decoded)
-\tfmt.Println("// Decrypted Go payload:")
-\tfmt.Println(string(payload))
+\t${randomVarName('camelCase')}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${kv}))
+\tfmt.Println(string(${randomVarName('camelCase')}))
+}
+`
+}
+
+function goWrapperMultiXor(code) {
+  const k1 = randomXorKey(16), k2 = randomXorKey(16)
+  const enc = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
+  const fn = randomFuncName()
+  const dv = randomVarName('camelCase'), k1v = randomVarName('camelCase'), k2v = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
+
+  const inits = goShuf([
+    `\t${dv} := []byte{${enc.join(', ')}}`,
+    `\t${k1v} := []byte{${k1.join(', ')}}`,
+    `\t${k2v} := []byte{${k2.join(', ')}}`,
+    goJunk(),
+  ])
+
+  return `package main
+
+import "fmt"
+
+func ${fn}(d, a, b []byte) string {
+\t${rv} := make([]byte, len(d))
+\tfor i := 0; i < len(d); i++ {
+${goLoopJunk()}
+\t\t${rv}[i] = (d[i] ^ b[i%len(b)]) ^ a[i%len(a)]
+\t}
+\treturn string(${rv})
+}
+
+func main() {
+${inits.join('\n')}
+${goJunk()}
+
+\tfmt.Println(${fn}(${dv}, ${k1v}, ${k2v}))
+}
+`
+}
+
+function goWrapperByteRot(code) {
+  const rotN = 3 + Math.floor(Math.random() * 50)
+  const b64 = toBase64(code)
+  const rot = Array.from(b64).map(c => (c.charCodeAt(0) + rotN) % 256)
+  const fn = randomFuncName()
+  const dv = randomVarName('camelCase'), nv = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
+
+  const inits = goShuf([
+    `\t${dv} := []byte{${rot.join(', ')}}`,
+    `\t${nv} := ${rotN}`,
+    goJunk(),
+    goJunk(),
+  ])
+
+  return `package main
+
+import (
+\t"encoding/base64"
+\t"fmt"
+)
+
+func ${fn}(d []byte, n int) string {
+\t${rv} := make([]byte, len(d))
+\tfor i := 0; i < len(d); i++ {
+${goLoopJunk()}
+\t\t${rv}[i] = byte((int(d[i]) - n + 256) % 256)
+\t}
+\treturn string(${rv})
+}
+
+func main() {
+${inits.join('\n')}
+${goJunk()}
+
+\t${randomVarName('camelCase')}, _ := base64.StdEncoding.DecodeString(${fn}(${dv}, ${nv}))
+\tfmt.Println(string(${randomVarName('camelCase')}))
 }
 `
 }

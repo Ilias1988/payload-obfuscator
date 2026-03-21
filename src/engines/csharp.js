@@ -282,42 +282,193 @@ function applyAntiAnalysis(code) {
   return '// Anti-analysis\n' + antiAnalysis + '\n' + code
 }
 
-/* ── Encryption Wrapper ──────────────────────────────────── */
+/* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
+
+function csJunk() {
+  const pool = [
+    () => `        var ${randomVarName('camelCase')} = (${Math.floor(Math.random()*999)} * ${Math.floor(Math.random()*99)} + ${Math.floor(Math.random()*9999)}) % 256;`,
+    () => `        var ${randomVarName('camelCase')} = BitConverter.GetBytes(${Math.floor(Math.random()*0xFFFFFF)});`,
+    () => `        var ${randomVarName('camelCase')} = "${Array.from({length: 6}, () => String.fromCharCode(65 + Math.floor(Math.random()*26))).join('')}";`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function csLoopJunk() {
+  const pool = [
+    () => `            var _ = (i * ${3 + Math.floor(Math.random()*17)} + ${Math.floor(Math.random()*255)}) % 256;`,
+    () => `            var _ = i ^ ${Math.floor(Math.random()*0xFF)};`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function csShuf(arr) {
+  const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }; return a
+}
 
 function applyEncryptionWrapper(code) {
+  const m = Math.floor(Math.random() * 4)
+  switch (m) {
+    case 0: return csWrapperXorB64(code)
+    case 1: return csWrapperHexShift(code)
+    case 2: return csWrapperMultiXor(code)
+    case 3: return csWrapperByteRot(code)
+    default: return csWrapperXorB64(code)
+  }
+}
+
+function csWrapperXorB64(code) {
   const key = randomXorKey(16)
   const b64 = toBase64(code)
-  const xorEncoded = Array.from(b64)
-    .map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+  const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+  const cn = randomFuncName(), mn = randomFuncName()
+  const kv = randomVarName('camelCase'), dv = randomVarName('camelCase')
 
-  const className = randomFuncName()
-  const methodName = randomFuncName()
-  const keyVar = randomVarName('camelCase')
-  const dataVar = randomVarName('camelCase')
+  const fieldOrder = csShuf([
+    `    static byte[] ${kv} = new byte[] {${key.join(', ')}};`,
+    `    static byte[] ${dv} = new byte[] {${xorData.join(', ')}};`,
+  ])
 
   return `using System;
 using System.Text;
 
-class ${className}
+class ${cn}
 {
-    static byte[] ${keyVar} = new byte[] {${key.join(', ')}};
-    static byte[] ${dataVar} = new byte[] {${xorEncoded.join(', ')}};
+${fieldOrder.join('\n')}
 
-    static string ${methodName}(byte[] d, byte[] k)
+    static string ${mn}(byte[] d, byte[] k)
     {
         byte[] r = new byte[d.Length];
         for (int i = 0; i < d.Length; i++)
+        {
+${csLoopJunk()}
             r[i] = (byte)(d[i] ^ k[i % k.Length]);
+        }
         return Encoding.ASCII.GetString(r);
     }
 
     static void Main()
     {
-        string decoded = Encoding.UTF8.GetString(
-            Convert.FromBase64String(${methodName}(${dataVar}, ${keyVar}))
+${csJunk()}
+${csJunk()}
+        string ${randomVarName('camelCase')} = Encoding.UTF8.GetString(
+            Convert.FromBase64String(${mn}(${dv}, ${kv}))
         );
-        Console.WriteLine("// Decrypted payload ready");
-        Console.WriteLine(decoded);
+        Console.WriteLine(${randomVarName('camelCase')});
+    }
+}
+`
+}
+
+function csWrapperHexShift(code) {
+  const shift = 3 + Math.floor(Math.random() * 25)
+  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+  const cn = randomFuncName(), mn = randomFuncName()
+  const dv = randomVarName('camelCase'), sv = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
+
+  return `using System;
+using System.Text;
+
+class ${cn}
+{
+    static string ${dv} = "${hexStr}";
+    static int ${sv} = ${shift};
+
+    static string ${mn}(string h, int s)
+    {
+        var ${rv} = new StringBuilder();
+        for (int i = 0; i < h.Length; i += 2)
+        {
+${csLoopJunk()}
+            int b = Convert.ToInt32(h.Substring(i, 2), 16);
+            ${rv}.Append((char)((b - s + 256) % 256));
+        }
+        return ${rv}.ToString();
+    }
+
+    static void Main()
+    {
+${csJunk()}
+        Console.WriteLine(${mn}(${dv}, ${sv}));
+    }
+}
+`
+}
+
+function csWrapperMultiXor(code) {
+  const k1 = randomXorKey(16), k2 = randomXorKey(16)
+  const enc = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
+  const cn = randomFuncName(), mn = randomFuncName()
+  const dv = randomVarName('camelCase'), k1v = randomVarName('camelCase'), k2v = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
+
+  const fields = csShuf([
+    `    static byte[] ${dv} = new byte[] {${enc.join(', ')}};`,
+    `    static byte[] ${k1v} = new byte[] {${k1.join(', ')}};`,
+    `    static byte[] ${k2v} = new byte[] {${k2.join(', ')}};`,
+  ])
+
+  return `using System;
+using System.Text;
+
+class ${cn}
+{
+${fields.join('\n')}
+
+    static string ${mn}(byte[] d, byte[] a, byte[] b)
+    {
+        var ${rv} = new StringBuilder();
+        for (int i = 0; i < d.Length; i++)
+        {
+${csLoopJunk()}
+            ${rv}.Append((char)((d[i] ^ b[i % b.Length]) ^ a[i % a.Length]));
+        }
+        return ${rv}.ToString();
+    }
+
+    static void Main()
+    {
+${csJunk()}
+${csJunk()}
+        Console.WriteLine(${mn}(${dv}, ${k1v}, ${k2v}));
+    }
+}
+`
+}
+
+function csWrapperByteRot(code) {
+  const rotN = 3 + Math.floor(Math.random() * 50)
+  const b64 = toBase64(code)
+  const rot = Array.from(b64).map(c => (c.charCodeAt(0) + rotN) % 256)
+  const cn = randomFuncName(), mn = randomFuncName()
+  const dv = randomVarName('camelCase'), nv = randomVarName('camelCase')
+  const rv = randomVarName('camelCase')
+
+  return `using System;
+using System.Text;
+
+class ${cn}
+{
+    static byte[] ${dv} = new byte[] {${rot.join(', ')}};
+    static int ${nv} = ${rotN};
+
+    static string ${mn}(byte[] d, int n)
+    {
+        var ${rv} = new StringBuilder();
+        for (int i = 0; i < d.Length; i++)
+        {
+${csLoopJunk()}
+            ${rv}.Append((char)((d[i] - n + 256) % 256));
+        }
+        return ${rv}.ToString();
+    }
+
+    static void Main()
+    {
+${csJunk()}
+        Console.WriteLine(Encoding.UTF8.GetString(
+            Convert.FromBase64String(${mn}(${dv}, ${nv}))
+        ));
     }
 }
 `

