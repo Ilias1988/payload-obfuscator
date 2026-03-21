@@ -11,7 +11,7 @@
 
 import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, isSafeForInjection } from '../utils/parser'
+import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 
 export function obfuscatePython(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -105,7 +105,38 @@ function applyVariableRandomization(code) {
   })
 }
 
-/* ── String Encoding (context-aware, no f-strings) ───────── */
+/* ── Encode a single static Python text segment ──────────── */
+
+function encodePyStatic(text) {
+  if (!text || text.length === 0) return '""'
+  if (hasUnicode(text)) {
+    const b64 = toBase64(text)
+    return `getattr(__import__("base64"), "b64decode")("${b64}").decode("utf-8")`
+  }
+  const method = Math.floor(Math.random() * 3)
+  switch (method) {
+    case 0: {
+      const hex = Array.from(text)
+        .map((c) => '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join('')
+      return `b"${hex}".decode()`
+    }
+    case 1: {
+      const hexStr = Array.from(text)
+        .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join('')
+      return `bytes.fromhex("${hexStr}").decode()`
+    }
+    case 2: {
+      const b64 = toBase64(text)
+      return `getattr(__import__("base64"), "b64decode")("${b64}").decode()`
+    }
+    default:
+      return `"${text}"`
+  }
+}
+
+/* ── String Encoding (context-aware, f-string aware) ─────── */
 
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'python')
@@ -122,8 +153,20 @@ function applyStringEncoding(code) {
       return `b"${content}"`
     }
 
-    // f-strings, r-strings, u-strings: STRIP prefix completely
-    // The obfuscated form doesn't need any prefix (f/r/u are all irrelevant after encoding)
+    // F-STRINGS: Deconstruct into concatenation (encode static, keep vars)
+    const isFString = lowerPrefix.includes('f')
+    if (isFString && hasInterpolation(content, 'python')) {
+      const segments = splitInterpolatedString(content, 'python')
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return `str(${seg.value})`  // Keep variable reference
+        if (seg.value.length === 0) return ''
+        return encodePyStatic(seg.value)  // Encode only static text
+      }).filter(p => p.length > 0)
+      return parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
+    }
+
+    // r-strings, u-strings: STRIP prefix completely
+    // The obfuscated form doesn't need any prefix
 
     // Unicode → force Base64 via getattr (stealth, no direct attribute access)
     if (hasUnicode(content)) {
@@ -131,31 +174,8 @@ function applyStringEncoding(code) {
       return `getattr(__import__("base64"), "b64decode")("${b64}").decode("utf-8")`
     }
 
-    // ASCII: choose safe method (NO f-strings, NO prefixes, getattr for base64)
-    const method = Math.floor(Math.random() * 3)
-    switch (method) {
-      case 0: {
-        // bytes hex decode: b'\xHH\xHH'.decode()
-        const hex = Array.from(content)
-          .map((c) => '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0'))
-          .join('')
-        return `b"${hex}".decode()`
-      }
-      case 1: {
-        // bytes.fromhex().decode() — clean, no imports needed
-        const hexStr = Array.from(content)
-          .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
-          .join('')
-        return `bytes.fromhex("${hexStr}").decode()`
-      }
-      case 2: {
-        // getattr base64 decode (stealth)
-        const b64 = toBase64(content)
-        return `getattr(__import__("base64"), "b64decode")("${b64}").decode()`
-      }
-      default:
-        return `"${content}"`
-    }
+    // ASCII: encode entire static string
+    return encodePyStatic(content)
   })
 
   return tokensToCode(transformed)
@@ -173,6 +193,20 @@ function applyXorStringEncryption(code) {
     const lp = (prefix || '').toLowerCase()
     if (lp === 'b' || lp === 'br' || lp === 'rb') return `b"${content}"`
     if (content.length < 3) return `"${content}"`
+
+    // F-STRINGS: XOR only static parts, keep vars as concatenation
+    const isFString = lp.includes('f')
+    if (isFString && hasInterpolation(content, 'python')) {
+      const segments = splitInterpolatedString(content, 'python')
+      const parts = segments.map(seg => {
+        if (seg.type === 'var') return `str(${seg.value})`
+        if (seg.value.length < 3) return seg.value.length > 0 ? `"${seg.value}"` : ''
+        const xor = xorEncryptForLanguage(seg.value, 'python', funcName)
+        if (!helperInjected) helperInjected = true
+        return xor.inline
+      }).filter(p => p.length > 0)
+      return parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
+    }
 
     const xor = xorEncryptForLanguage(content, 'python', funcName)
     if (!helperInjected) helperInjected = true

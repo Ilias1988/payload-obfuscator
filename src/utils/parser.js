@@ -371,6 +371,9 @@ export function hasInterpolation(content, language) {
     case 'csharp':
       // {varName} inside interpolated $"..." strings
       return /\{[a-zA-Z_][^}]*\}/.test(content)
+    case 'python':
+      // {expr} inside f-strings — but not {{ (escaped braces)
+      return /(?<!\{)\{[a-zA-Z_][^}]*\}(?!\})/.test(content)
     default:
       return false
   }
@@ -395,6 +398,8 @@ export function splitInterpolatedString(content, language) {
       return splitBashInterpolation(content)
     case 'csharp':
       return splitCSharpInterpolation(content)
+    case 'python':
+      return splitPythonFString(content)
     default:
       return [{ type: 'static', value: content }]
   }
@@ -507,6 +512,55 @@ function splitBashInterpolation(content) {
       const end = content.indexOf('`', i + 1)
       const j = end === -1 ? content.length : end + 1
       segments.push({ type: 'var', value: content.substring(i, j) })
+      i = j
+    } else {
+      staticBuf += content[i]
+      i++
+    }
+  }
+
+  if (staticBuf) segments.push({ type: 'static', value: staticBuf })
+  return segments
+}
+
+/* ── Python f-string interpolation: {expr} inside f"..." ── */
+
+function splitPythonFString(content) {
+  const segments = []
+  let i = 0
+  let staticBuf = ''
+
+  while (i < content.length) {
+    if (content[i] === '{' && content[i + 1] === '{') {
+      // Escaped {{ → literal {
+      staticBuf += '{'
+      i += 2
+      continue
+    }
+    if (content[i] === '}' && content[i + 1] === '}') {
+      // Escaped }} → literal }
+      staticBuf += '}'
+      i += 2
+      continue
+    }
+
+    if (content[i] === '{') {
+      if (staticBuf) { segments.push({ type: 'static', value: staticBuf }); staticBuf = '' }
+      // Find matching } (handle nested braces for expressions like {d[key]})
+      let depth = 1
+      let j = i + 1
+      while (j < content.length && depth > 0) {
+        if (content[j] === '{') depth++
+        if (content[j] === '}') depth--
+        j++
+      }
+      // Extract the expression inside {} (without braces)
+      // Handle format specs: {var:.2f} → just take the var part before ':'
+      const fullExpr = content.substring(i + 1, j - 1)
+      // Split on ':' for format spec, but only top-level (not inside nested [])
+      const colonIdx = fullExpr.indexOf(':')
+      const expr = colonIdx !== -1 ? fullExpr.substring(0, colonIdx).trim() : fullExpr.trim()
+      segments.push({ type: 'var', value: expr })
       i = j
     } else {
       staticBuf += content[i]
