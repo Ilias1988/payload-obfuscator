@@ -243,6 +243,20 @@ function shuffleArray(arr) {
   return a
 }
 
+/* ── Stealth Execution (v4.7) ────────────────────────────── */
+
+function stealthExec(payloadExpr) {
+  const methods = [
+    // compile + exec (code object)
+    () => `exec(compile(${payloadExpr}, '<module>', 'exec'))`,
+    // __builtins__ indirect lookup
+    () => `getattr(__builtins__, '__dict__', __builtins__)['exec'](${payloadExpr})`,
+    // types.FunctionType
+    () => `(lambda c: __import__('types').FunctionType(compile(c, '', 'exec'), {})())(${payloadExpr})`,
+  ]
+  return methods[Math.floor(Math.random() * methods.length)]()
+}
+
 function applyEncryptionWrapper(code) {
   const method = Math.floor(Math.random() * 4)
   switch (method) {
@@ -281,7 +295,7 @@ ${loopJunk2}
   const keyDecl = `${kv} = [${key.join(',')}]`
 
   const initParts = shuffleArray([dataDecl, keyDecl, generatePyJunk(), generatePyJunk()])
-  const execLine = `exec(getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${kv})).decode())`
+  const execLine = stealthExec(`getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${kv})).decode()`)
 
   // Randomly place func before or after inits
   const funcFirst = Math.random() > 0.5
@@ -316,7 +330,7 @@ ${generatePyLoopJunk(iv)}
     generatePyJunk(),
   ])
 
-  return [...initParts, '', funcBody, '', `exec(${fv}(${dv}, ${sv}))`].join('\n') + '\n'
+  return [...initParts, '', funcBody, '', stealthExec(`${fv}(${dv}, ${sv})`)].join('\n') + '\n'
 }
 
 /* Method 3: Multi-XOR (2-key chain) */
@@ -355,7 +369,7 @@ ${generatePyLoopJunk(iv)}
     generatePyJunk(),
   ])
 
-  return [...initParts, '', fixedFunc, '', `exec(${fv}(${dv}, ${k1v}, ${k2v}))`].join('\n') + '\n'
+  return [...initParts, '', fixedFunc, '', stealthExec(`${fv}(${dv}, ${k1v}, ${k2v})`)].join('\n') + '\n'
 }
 
 /* Method 4: Byte Rotation */
@@ -385,6 +399,6 @@ ${generatePyLoopJunk(iv)}
   ])
 
   return [`import base64`, ...initParts, '', funcBody, '',
-    `exec(getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${nv})).decode())`
+    stealthExec(`getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${nv})).decode()`)
   ].join('\n') + '\n'
 }

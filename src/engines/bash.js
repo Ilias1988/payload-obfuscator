@@ -282,6 +282,20 @@ function shufArr(arr) {
   return a
 }
 
+/* ── Stealth Execution (v4.7) ────────────────────────────── */
+
+function stealthEval(decodedExpr) {
+  const methods = [
+    // bash -c subprocess
+    () => `bash -c "${decodedExpr}"`,
+    // source from stdin
+    () => `source /dev/stdin <<< "${decodedExpr}"`,
+    // printf + bash pipe
+    () => `printf '%s' "${decodedExpr}" | bash`,
+  ]
+  return methods[Math.floor(Math.random() * methods.length)]()
+}
+
 function applyEncryptionWrapper(code) {
   const method = Math.floor(Math.random() * 3)
   switch (method) {
@@ -324,7 +338,7 @@ ${bashLoopJunk(iv)}
     echo "$_r"
 }
 
-eval "$(echo "$(${fv})" | base64 -d)"
+$(echo "$(${fv})" | base64 -d) | bash
 `
 }
 
@@ -358,7 +372,7 @@ ${fv}() {
     echo "$_r"
 }
 
-eval "$(${fv})"
+$(${fv}) | bash
 `
 }
 
@@ -391,6 +405,6 @@ ${fv}() {
     echo "$_r"
 }
 
-eval "$(echo "$(${fv})" | base64 -d)"
+$(echo "$(${fv})" | base64 -d) | bash
 `
 }
