@@ -157,6 +157,14 @@ export const OBFUSCATION_LAYERS = [
     supported: ['powershell', 'csharp', 'go'],
   },
   {
+    id: 'amsietw',
+    name: 'AMSI/ETW Patch',
+    icon: '🧬',
+    description: 'Prepend obfuscated AMSI bypass + ETW blind before payload execution',
+    impact: 'Disables runtime memory scanning and event tracing on Windows targets',
+    supported: ['powershell', 'csharp'],
+  },
+  {
     id: 'encrypt',
     name: 'Encryption Wrapper',
     icon: '🔒',

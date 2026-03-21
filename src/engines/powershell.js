@@ -13,6 +13,7 @@ import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
+import { generatePSAmsiEtwBlock } from './amsi'
 
 const IEX_STEALTH = '& ($ShellId[1]+$ShellId[13]+\'X\')'
 
@@ -44,6 +45,9 @@ export function obfuscatePowerShell(code, layers = []) {
   }
   if (layers.includes('antianalysis')) {
     result = applyAntiAnalysis(result)
+  }
+  if (layers.includes('amsietw')) {
+    result = generatePSAmsiEtwBlock() + '\n' + result
   }
   if (layers.includes('encrypt')) {
     result = applyEncryptionWrapper(result)

