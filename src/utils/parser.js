@@ -326,6 +326,18 @@ function tryString(code, i, language) {
         j += 2 // skip escape sequence
         continue
       }
+      // PowerShell: skip over $(...) subexpressions which may contain nested quotes
+      if (language === 'powershell' && ch === '"' && code[j] === '$' && code[j + 1] === '(') {
+        let depth = 1
+        j += 2
+        while (j < code.length && depth > 0) {
+          if (code[j] === '(') depth++
+          else if (code[j] === ')') depth--
+          if (depth > 0) j++
+        }
+        if (j < code.length) j++ // skip closing ')'
+        continue
+      }
       if (code[j] === ch) break
       j++
     }

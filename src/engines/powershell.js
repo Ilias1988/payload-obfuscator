@@ -60,11 +60,11 @@ export function obfuscatePowerShell(code, layers = []) {
 
 function applyIEXStealth(code) {
   const iexPatterns = [
-    /\bInvoke-Expression\b/gi,
-    /\bIEX\s*\(/gi,
-    /\biex\s*\(/gi,
-    /\bIEX\b/gi,
-    /\biex\b/gi,
+    /\bInvoke-Expression\b/i,
+    /\bIEX\s*\(/i,
+    /\biex\s*\(/i,
+    /\bIEX\b/i,
+    /\biex\b/i,
   ]
 
   let applied = false
@@ -98,6 +98,14 @@ function applyVariableRandomization(code) {
     'PSScriptRoot', 'MyInvocation', 'ErrorActionPreference', '_',
     'env', 'Host', 'PWD', 'HOME', 'PSVersionTable', 'LASTEXITCODE',
     'Error', 'Matches', 'ForEach', 'switch', 'process', 'begin', 'end',
+    // Critical PS auto-variables (must NEVER rename)
+    'ShellId', 'ExecutionContext', 'PID', 'PSItem', 'this',
+    'PSCulture', 'PSUICulture', 'PSEdition', 'IsWindows', 'IsLinux', 'IsMacOS',
+    'ProgressPreference', 'VerbosePreference', 'WarningPreference',
+    'DebugPreference', 'InformationPreference', 'ConfirmPreference',
+    'WhatIfPreference', 'OFS', 'ConsoleFileName', 'MaximumHistoryCount',
+    'NestedPromptLevel', 'StackTrace', 'PSDefaultParameterValues',
+    'PSModuleAutoLoadingPreference', 'PSSessionConfigurationName',
     // .NET / PS methods (dot-notation targets)
     'GetType', 'GetField', 'SetValue', 'ToString', 'GetBytes', 'GetString',
     'FromBase64String', 'ToBase64String', 'Invoke', 'Create', 'Load',
@@ -162,17 +170,30 @@ function applyVariableRandomization(code) {
 
 /* ── Encode a single static text segment for PowerShell ──── */
 
+// Map PowerShell backtick escape sequences to their real char codes
+const PS_ESCAPES = { '`n': 0x0A, '`r': 0x0D, '`t': 0x09, '`a': 0x07, '`b': 0x08, '`f': 0x0C, '`v': 0x0B, '`0': 0x00, '``': 0x60 }
+
+function resolveEscapes(text) {
+  // Convert PS escape sequences to actual characters for correct encoding
+  let resolved = text
+  for (const [esc, code] of Object.entries(PS_ESCAPES)) {
+    resolved = resolved.replaceAll(esc, String.fromCharCode(code))
+  }
+  return resolved
+}
+
 function encodeStaticPS(text) {
   if (!text) return ''
-  if (hasUnicode(text)) {
-    return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(text)}"))`
+  const resolved = resolveEscapes(text)
+  if (hasUnicode(resolved)) {
+    return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}"))`
   }
   const method = Math.floor(Math.random() * 2)
   if (method === 0) {
-    const chars = Array.from(text).map(c => `[char]0x${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('+')
+    const chars = Array.from(resolved).map(c => `[char]0x${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('+')
     return `(${chars})`
   }
-  return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(text)}"))`
+  return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}"))`
 }
 
 /* ── String Encoding (interpolation-aware, Unicode-safe) ─── */
