@@ -82,15 +82,36 @@ function applyVariableRandomization(code) {
 
   if (Object.keys(varMap).length === 0) return code
 
-  return transformCodeOnly(code, 'csharp', (codeSegment) => {
-    let result = codeSegment
-    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+
+  // Helper: rename identifiers in text
+  const renameVarsInText = (text) => {
+    let result = text
     for (const varName of sortedVars) {
       const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
       result = result.replace(regex, varMap[varName])
     }
     return result
+  }
+
+  // Process ALL tokens: code + interpolated $"..." strings
+  const transformed = tokens.map(token => {
+    if (token.type === 'code') {
+      return { ...token, value: renameVarsInText(token.value) }
+    }
+    // Rename inside C# interpolated strings $"..."
+    // {varName} expressions inside $"..." need their identifiers renamed
+    if (token.type === 'string' && (token.quoteChar === '$"' || token.prefix === '$')) {
+      // Rename identifiers inside {expr} placeholders, leave static text alone
+      const newValue = token.value.replace(/\{([^}]+)\}/g, (match, expr) => {
+        return '{' + renameVarsInText(expr) + '}'
+      })
+      return { ...token, value: newValue, raw: `$"${newValue}"` }
+    }
+    return token
   })
+
+  return tokensToCode(transformed)
 }
 
 /* ── Encode a single static C# text segment ─────────────── */

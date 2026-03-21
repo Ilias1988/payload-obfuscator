@@ -114,16 +114,35 @@ function applyVariableRandomization(code) {
 
   if (Object.keys(varMap).length === 0) return code
 
-  // Second pass: replace ONLY in code tokens
-  return transformCodeOnly(code, 'powershell', (codeSegment) => {
-    let result = codeSegment
-    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+
+  // Helper: rename $vars in a string
+  const renameVarsInText = (text) => {
+    let result = text
     for (const varName of sortedVars) {
+      // $varName and ${varName}
       const regex = new RegExp('\\$' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      const braceRegex = new RegExp('\\$\\{' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\}', 'g')
+      result = result.replace(braceRegex, '${' + varMap[varName] + '}')
       result = result.replace(regex, '$' + varMap[varName])
     }
     return result
+  }
+
+  // Second pass: replace in CODE tokens AND inside interpolated strings
+  const transformed = tokens.map(token => {
+    if (token.type === 'code') {
+      return { ...token, value: renameVarsInText(token.value) }
+    }
+    // Rename inside double-quoted strings (PowerShell interpolates these)
+    if (token.type === 'string' && token.quoteChar === '"') {
+      const newValue = renameVarsInText(token.value)
+      return { ...token, value: newValue, raw: `"${newValue}"` }
+    }
+    return token
   })
+
+  return tokensToCode(transformed)
 }
 
 /* ── Encode a single static text segment for PowerShell ──── */

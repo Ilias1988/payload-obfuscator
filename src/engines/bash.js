@@ -86,30 +86,53 @@ function applyVariableRandomization(code) {
 
   if (Object.keys(varMap).length === 0) return code
 
-  return transformCodeOnly(code, 'bash', (codeSegment) => {
-    let result = codeSegment
-    const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+  const sortedVars = Object.keys(varMap).sort((a, b) => b.length - a.length)
+
+  // Helper: rename $vars in text
+  const renameVarsInText = (text) => {
+    let result = text
     for (const varName of sortedVars) {
-      const assignRegex = new RegExp('\\b' + varName + '=', 'g')
-      const useRegex = new RegExp('\\$' + varName + '\\b', 'g')
       const braceRegex = new RegExp('\\$\\{' + varName + '\\}', 'g')
-      result = result.replace(assignRegex, varMap[varName] + '=')
+      const useRegex = new RegExp('\\$' + varName + '\\b', 'g')
       result = result.replace(braceRegex, '${' + varMap[varName] + '}')
       result = result.replace(useRegex, '$' + varMap[varName])
     }
+    return result
+  }
 
-    // Command obfuscation: replace known commands with printf hex
+  // Helper: rename in code (includes assignments + commands)
+  const renameInCode = (codeSegment) => {
+    let result = codeSegment
+    for (const varName of sortedVars) {
+      const assignRegex = new RegExp('\\b' + varName + '=', 'g')
+      result = result.replace(assignRegex, varMap[varName] + '=')
+    }
+    result = renameVarsInText(result)
+    // Command obfuscation
     for (const cmd of OBFUSCATABLE_COMMANDS) {
-      // Only replace at word boundaries when used as commands (start of line/pipe/subshell)
       const cmdRegex = new RegExp('(?<=^|\\||;|\\$\\(|`)\\s*' + cmd + '\\b', 'gm')
       result = result.replace(cmdRegex, (match) => {
         const leadingSpace = match.match(/^\s*/)?.[0] || ''
         return leadingSpace + obfuscateCommand(cmd)
       })
     }
-
     return result
+  }
+
+  // Process ALL tokens: code + interpolated double-quoted strings
+  const transformed = tokens.map(token => {
+    if (token.type === 'code') {
+      return { ...token, value: renameInCode(token.value) }
+    }
+    // Rename inside double-quoted strings (bash interpolates these)
+    if (token.type === 'string' && token.quoteChar === '"') {
+      const newValue = renameVarsInText(token.value)
+      return { ...token, value: newValue, raw: `"${newValue}"` }
+    }
+    return token
   })
+
+  return tokensToCode(transformed)
 }
 
 /* ── Encode a single static text segment for Bash ────────── */
