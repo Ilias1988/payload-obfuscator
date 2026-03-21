@@ -338,7 +338,7 @@ ${bashLoopJunk(iv)}
     echo "$_r"
 }
 
-$(echo "$(${fv})" | base64 -d) | bash
+${stealthEval(`$(echo "$(${fv})" | base64 -d)`)}
 `
 }
 
@@ -372,7 +372,7 @@ ${fv}() {
     echo "$_r"
 }
 
-$(${fv}) | bash
+${stealthEval(`$(${fv})`)}
 `
 }
 
@@ -405,6 +405,6 @@ ${fv}() {
     echo "$_r"
 }
 
-$(echo "$(${fv})" | base64 -d) | bash
+${stealthEval(`$(echo "$(${fv})" | base64 -d)`)}
 `
 }

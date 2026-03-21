@@ -153,6 +153,39 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     })
   }
 
+  // 5b. XOR String Encryption
+  if (activeLayers.includes('xorstrings')) {
+    const impact = -15
+    score += impact
+    breakdown.push({
+      name: 'XOR String Encryption',
+      impact,
+      description: 'Runtime XOR decryption of string literals evades static scanners',
+    })
+  }
+
+  // 5c. Control Flow Flattening
+  if (activeLayers.includes('controlflow')) {
+    const impact = -10
+    score += impact
+    breakdown.push({
+      name: 'Control Flow Flattening',
+      impact,
+      description: 'Switch-based dispatch obscures program logic from decompilers',
+    })
+  }
+
+  // 5d. AMSI/ETW Memory Patch
+  if (activeLayers.includes('amsietw')) {
+    const impact = -15
+    score += impact
+    breakdown.push({
+      name: 'AMSI/ETW Memory Patch',
+      impact,
+      description: 'In-memory patches disable runtime scanning and event tracing',
+    })
+  }
+
   // 6. Entropy penalty — high entropy increases detection
   const entropy = calculateEntropy(obfuscated)
   if (entropy > 6.0) {

@@ -345,14 +345,6 @@ function pyWrapperMultiXor(code) {
   const fv = randomVarName('snake_case')
   const iv = randomVarName('snake_case')
 
-  const funcBody = `def ${fv}(${dv}, ${k1v}, ${k2v}):
-    ${randomVarName('snake_case')} = []
-    for ${iv} in range(len(${dv})):
-${generatePyLoopJunk(iv)}
-        ${randomVarName('snake_case')}.append(chr((${dv}[${iv}] ^ ${k2v}[${iv} % len(${k2v})]) ^ ${k1v}[${iv} % len(${k1v})]))
-    return ''.join(${randomVarName('snake_case')})`
-
-  // Fix: use consistent var for result
   const rr = randomVarName('snake_case')
   const fixedFunc = `def ${fv}(${dv}, ${k1v}, ${k2v}):
     ${rr} = []

