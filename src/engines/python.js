@@ -267,13 +267,22 @@ function applyXorStringEncryption(code) {
   let helperInjected = false
   const tokens = tokenize(code, 'python')
 
-  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
-    if (quoteChar === '"""' || quoteChar === "'''") return `${quoteChar}${content}${quoteChar}`
-    const lp = (prefix || '').toLowerCase()
-    if (lp === 'b' || lp === 'br' || lp === 'rb') return `b"${content}"`
-    if (content.length < 3) return `"${content}"`
+  // Manual token processing (same pattern as applyStringEncoding)
+  // to handle implicit string concatenation with + insertion
+  const transformed = tokens.map((token) => {
+    if (token.type !== 'string') return token
+    if (token.value.length < 2) return token
 
-    // F-STRINGS: XOR only static parts, keep vars as concatenation
+    const content = token.value
+    const quoteChar = token.quoteChar
+    const prefix = token.prefix || ''
+
+    if (quoteChar === '"""' || quoteChar === "'''") return token
+    const lp = prefix.toLowerCase()
+    if (lp === 'b' || lp === 'br' || lp === 'rb') return token
+    if (content.length < 3) return token // keep short strings as-is
+
+    let encoded
     const isFString = lp.includes('f')
     if (isFString && hasInterpolation(content, 'python')) {
       const segments = splitInterpolatedString(content, 'python')
@@ -284,20 +293,43 @@ function applyXorStringEncryption(code) {
         if (!helperInjected) helperInjected = true
         return xor.inline
       }).filter(p => p.length > 0)
-      return parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
+      encoded = parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
+    } else {
+      const xor = xorEncryptForLanguage(content, 'python', funcName)
+      if (!helperInjected) helperInjected = true
+      encoded = xor.inline
     }
 
-    const xor = xorEncryptForLanguage(content, 'python', funcName)
-    if (!helperInjected) helperInjected = true
-    return xor.inline
+    return { type: 'code', value: encoded, _wasString: true }
   })
 
-  let result = tokensToCode(transformed)
+  // Fix implicit string concatenation: insert + between adjacent transformed tokens
+  const result = []
+  for (let i = 0; i < transformed.length; i++) {
+    result.push(transformed[i])
+    if (transformed[i]._wasString) {
+      let j = i + 1
+      while (j < transformed.length) {
+        if (transformed[j].type === 'code' && /^\s+$/.test(transformed[j].value)) { j++; continue }
+        break
+      }
+      if (j < transformed.length && transformed[j]._wasString) {
+        for (let k = i + 1; k < j; k++) transformed[k] = { type: 'code', value: '' }
+        result.push({ type: 'code', value: ' + ' })
+      }
+    }
+  }
+
+  let output = result.map((t) => {
+    if (t.type === 'string') return t.raw || `${t.prefix || ''}${t.quoteChar}${t.value}${t.quoteChar}`
+    return t.value
+  }).join('')
+
   if (helperInjected) {
     const helper = xorEncryptForLanguage('x', 'python', funcName).helper
-    result = helper + '\n' + result
+    output = helper + '\n' + output
   }
-  return result
+  return output
 }
 
 /* ── Dead Code Injection (safe locations only) ───────────── */
@@ -306,12 +338,36 @@ function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
   const result = []
 
+  // Track open parens/brackets/braces for multi-line expression detection
+  let openParens = 0
+
   for (let i = 0; i < lines.length; i++) {
-    result.push(lines[i])
+    const line = lines[i]
+    const trimmed = line.trim()
+    result.push(line)
+
+    // Count open/close brackets to detect multi-line expressions
+    for (const ch of trimmed) {
+      if (ch === '(' || ch === '[' || ch === '{') openParens++
+      if (ch === ')' || ch === ']' || ch === '}') openParens = Math.max(0, openParens - 1)
+    }
+
+    // Skip injection if:
+    // 1. Inside a multi-line expression (open parens/brackets)
+    // 2. Line ends with ':' (def/for/if/while/class/try/except/with block opener)
+    // 3. Line ends with '\' (explicit line continuation)
+    // 4. Line is empty or just a comment
+    // 5. Line is a decorator (@)
+    if (openParens > 0) continue
+    if (trimmed.endsWith(':')) continue
+    if (trimmed.endsWith('\\')) continue
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (trimmed.startsWith('@')) continue
+
     if (i > 0 && i % (3 + Math.floor(Math.random() * 3)) === 0) {
-      if (isSafeForInjection(lines[i], 'python')) {
+      if (isSafeForInjection(line, 'python')) {
         // Match indentation of current line
-        const indent = lines[i].match(/^(\s*)/)?.[1] || ''
+        const indent = line.match(/^(\s*)/)?.[1] || ''
         result.push(indent + generateDeadCode('python'))
       }
     }
