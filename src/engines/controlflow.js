@@ -130,6 +130,19 @@ function extractPreambleAndBody(code, language) {
       // Comments at top = preamble
       if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed === '') {
         preamble.push(line)
+        // PowerShell block comment <# ... #> — absorb entire block into preamble
+        if (language === 'powershell' && trimmed.startsWith('<#') && !line.includes('#>')) {
+          // Keep absorbing lines until we find #>
+          const idx = lines.indexOf(line)
+          let li = idx + 1
+          while (li < lines.length) {
+            preamble.push(lines[li])
+            if (lines[li].includes('#>')) break
+            li++
+          }
+          // Skip these lines in the main loop by adjusting the iterator
+          // (we can't directly, so we'll handle via body filtering)
+        }
         continue
       }
       // Method signature in C# (static void Main, etc.)
@@ -178,6 +191,20 @@ function splitIntoBlocks(bodyLines, language) {
     // Skip empty lines — attach to current block
     if (trimmed === '') {
       currentBlock.push(line)
+      continue
+    }
+
+    // Block comments <# ... #> — absorb as atomic unit (never split)
+    if (language === 'powershell' && (trimmed.startsWith('<#') || trimmed.includes('<#'))) {
+      currentBlock.push(line)
+      // If closing #> is NOT on this same line, absorb until we find it
+      if (!line.includes('#>') || (line.indexOf('<#') > line.indexOf('#>'))) {
+        while (i + 1 < bodyLines.length) {
+          i++
+          currentBlock.push(bodyLines[i])
+          if (bodyLines[i].includes('#>')) break
+        }
+      }
       continue
     }
 
