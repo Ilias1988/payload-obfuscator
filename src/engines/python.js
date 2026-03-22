@@ -126,18 +126,10 @@ function applyVariableRandomization(code) {
       return { ...token, value: renameVarsIn(token.value) }
     }
 
-    // F-STRING: rename {varName} inside interpolation expressions
+    // F-STRING: rename variables ANYWHERE inside {expr} interpolation expressions
     if (token.type === 'string' && (token.prefix || '').toLowerCase().includes('f')) {
-      let newContent = token.value
-      for (const varName of sortedVars) {
-        // Match {varName}, {varName:fmt}, {varName.attr}, {varName[idx]}
-        const fRegex = new RegExp(
-          '(\\{)' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\b[^}]*\\})',
-          'g'
-        )
-        newContent = newContent.replace(fRegex, '$1' + varMap[varName] + '$2')
-      }
-      // Rebuild raw with updated content
+      // Apply the same renaming as code tokens — word boundaries prevent false matches
+      const newContent = renameVarsIn(token.value)
       const newRaw = (token.prefix || '') + token.quoteChar + newContent + token.quoteChar
       return { ...token, value: newContent, raw: newRaw }
     }
