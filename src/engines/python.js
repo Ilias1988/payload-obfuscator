@@ -180,44 +180,84 @@ function encodePyStatic(text) {
 function applyStringEncoding(code) {
   const tokens = tokenize(code, 'python')
 
-  const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
+  // Mark transformed strings so we can fix implicit concatenation
+  const transformed = tokens.map((token) => {
+    if (token.type !== 'string') return token
+    if (token.value.length < 2) return token
+
+    const content = token.value
+    const quoteChar = token.quoteChar
+    const prefix = token.prefix || ''
+
     // Skip triple-quoted strings — never obfuscate
     if (quoteChar === '"""' || quoteChar === "'''") {
-      return `${quoteChar}${content}${quoteChar}`
+      return token // keep as-is
     }
 
     // b-strings: keep as bytes literal (don't encode)
-    const lowerPrefix = (prefix || '').toLowerCase()
+    const lowerPrefix = prefix.toLowerCase()
     if (lowerPrefix === 'b' || lowerPrefix === 'br' || lowerPrefix === 'rb') {
-      return `b"${content}"`
+      return token // keep as-is
     }
 
+    let encoded
     // F-STRINGS: Deconstruct into concatenation (encode static, keep vars)
     const isFString = lowerPrefix.includes('f')
     if (isFString && hasInterpolation(content, 'python')) {
       const segments = splitInterpolatedString(content, 'python')
       const parts = segments.map(seg => {
-        if (seg.type === 'var') return `str(${seg.value})`  // Keep variable reference
+        if (seg.type === 'var') return `str(${seg.value})`
         if (seg.value.length === 0) return ''
-        return encodePyStatic(seg.value)  // Encode only static text
+        return encodePyStatic(seg.value)
       }).filter(p => p.length > 0)
-      return parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
-    }
-
-    // r-strings, u-strings: STRIP prefix completely
-    // The obfuscated form doesn't need any prefix
-
-    // Unicode → force Base64 via getattr (stealth, no direct attribute access)
-    if (hasUnicode(content)) {
+      encoded = parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`
+    } else if (hasUnicode(content)) {
       const b64 = toBase64(content)
-      return `getattr(__import__("base64"), "b64decode")("${b64}").decode("utf-8")`
+      encoded = `getattr(__import__("base64"), "b64decode")("${b64}").decode("utf-8")`
+    } else {
+      encoded = encodePyStatic(content)
     }
 
-    // ASCII: encode entire static string
-    return encodePyStatic(content)
+    // Tag as transformed-from-string so we can fix implicit concat
+    return { type: 'code', value: encoded, _wasString: true }
   })
 
-  return tokensToCode(transformed)
+  // Fix Python implicit string concatenation:
+  // If two adjacent transformed tokens exist (with only whitespace between),
+  // insert ' + ' to prevent (expr)(expr) being interpreted as a function call
+  const result = []
+  for (let i = 0; i < transformed.length; i++) {
+    result.push(transformed[i])
+
+    if (transformed[i]._wasString) {
+      // Look ahead: skip whitespace-only code tokens, find next _wasString
+      let j = i + 1
+      while (j < transformed.length) {
+        if (transformed[j].type === 'code' && /^\s+$/.test(transformed[j].value)) {
+          j++
+          continue
+        }
+        break
+      }
+      if (j < transformed.length && transformed[j]._wasString) {
+        // Replace the whitespace between with ' + '
+        // Remove intermediate whitespace tokens and add connector
+        const wsTokens = []
+        for (let k = i + 1; k < j; k++) wsTokens.push(k)
+        // Mark them to be replaced with ' + '
+        for (const k of wsTokens) {
+          transformed[k] = { type: 'code', value: '' } // clear whitespace
+        }
+        // Add ' + ' after current token
+        result.push({ type: 'code', value: ' + ' })
+      }
+    }
+  }
+
+  return result.map((t) => {
+    if (t.type === 'string') return t.raw || `${t.prefix || ''}${t.quoteChar}${t.value}${t.quoteChar}`
+    return t.value
+  }).join('')
 }
 
 /* ── XOR String Encryption (Platinum) ────────────────────── */
