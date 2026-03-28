@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://payload-obfuscator.dev/sitemap.xml
