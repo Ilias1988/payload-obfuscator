@@ -10,7 +10,7 @@
  * - Unicode → force Base64
  */
 
-import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
@@ -129,8 +129,9 @@ function applyVariableRandomization(code) {
 
 /* ── Encode a single static C# text segment ─────────────── */
 
-function encodeStaticCS(text) {
-  if (!text) return ''
+function encodeStaticCS(rawText) {
+  if (!rawText) return ''
+  const text = resolveLanguageEscapes(rawText, 'csharp')
   if (hasUnicode(text)) {
     return `System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("${toBase64(text)}"))`
   }

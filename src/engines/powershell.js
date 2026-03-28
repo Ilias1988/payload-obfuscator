@@ -9,7 +9,7 @@
  * - Dead code only injected at safe locations
  */
 
-import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 import { applyControlFlowFlattening } from './controlflow'
@@ -170,21 +170,9 @@ function applyVariableRandomization(code) {
 
 /* ── Encode a single static text segment for PowerShell ──── */
 
-// Map PowerShell backtick escape sequences to their real char codes
-const PS_ESCAPES = { '`n': 0x0A, '`r': 0x0D, '`t': 0x09, '`a': 0x07, '`b': 0x08, '`f': 0x0C, '`v': 0x0B, '`0': 0x00, '``': 0x60 }
-
-function resolveEscapes(text) {
-  // Convert PS escape sequences to actual characters for correct encoding
-  let resolved = text
-  for (const [esc, code] of Object.entries(PS_ESCAPES)) {
-    resolved = resolved.replaceAll(esc, String.fromCharCode(code))
-  }
-  return resolved
-}
-
-function encodeStaticPS(text) {
-  if (!text) return ''
-  const resolved = resolveEscapes(text)
+function encodeStaticPS(rawText) {
+  if (!rawText) return ''
+  const resolved = resolveLanguageEscapes(rawText, 'powershell')
   if (hasUnicode(resolved)) {
     return `([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${toBase64(resolved)}")))`
   }
@@ -375,12 +363,12 @@ function psWrapperXorB64(code) {
 ${inits.join('\n')}
 
 function ${fv}($d, $k) {
-    $${rv} = @()
+    $${rv} = ""
     for ($${iv} = 0; $${iv} -lt $d.Length; $${iv}++) {
 ${psLoopJunk(iv)}
-        $${rv} += [byte]($d[$${iv}] -bxor $k[$${iv} % $k.Length])
+        $${rv} += [char]($d[$${iv}] -bxor $k[$${iv} % $k.Length])
     }
-    return [System.Text.Encoding]::ASCII.GetString([byte[]]$${rv})
+    return $${rv}
 }
 
 ${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${kv})))`)}
@@ -389,7 +377,9 @@ ${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBa
 
 function psWrapperHexShift(code) {
   const shift = 3 + Math.floor(Math.random() * 25)
-  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+  // B64-first: encode to Base64 (ASCII-safe) THEN hex-shift
+  const b64 = toBase64(code)
+  const hexStr = Array.from(b64).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
 
   const dv = randomVarName('short'), sv = randomVarName('short')
   const fv = randomFuncName(), rv = randomVarName('short')
@@ -408,13 +398,15 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-${stealthInvoke(`(${fv} $${dv} $${sv})`)}
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${sv})))`)}
 `
 }
 
 function psWrapperMultiXor(code) {
   const k1 = randomXorKey(16), k2 = randomXorKey(16)
-  const enc = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
+  // B64-first: encode to Base64 (ASCII-safe) THEN double-XOR
+  const b64 = toBase64(code)
+  const enc = Array.from(b64).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
 
   const dv = randomVarName('short'), k1v = randomVarName('short'), k2v = randomVarName('short')
   const fv = randomFuncName(), rv = randomVarName('short')
@@ -432,7 +424,7 @@ ${psLoopJunk('i')}
     return $${rv}
 }
 
-${stealthInvoke(`(${fv} $${dv} $${k1v} $${k2v})`)}
+${stealthInvoke(`[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($(${fv} $${dv} $${k1v} $${k2v})))`)}
 `
 }
 

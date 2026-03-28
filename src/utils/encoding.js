@@ -58,6 +58,41 @@ export function generateXorKey(len) {
 }
 
 /**
+ * Resolve language-specific escape sequences to real characters.
+ * Called BEFORE encoding string content (Base64/Hex/XOR) so that
+ * control characters like \n and \t are preserved as actual bytes.
+ *
+ * @param {string} content - Raw string content from tokenizer
+ * @param {string} language - Target language
+ * @returns {string} Content with escape sequences resolved
+ */
+export function resolveLanguageEscapes(content, language) {
+  if (!content) return content
+
+  // Common C-style escapes (Python, C#, Go, Bash)
+  const C_ESCAPES = {
+    '\\n': '\n', '\\t': '\t', '\\r': '\r', '\\0': '\0',
+    '\\a': '\x07', '\\b': '\x08', '\\f': '\x0C', '\\v': '\x0B',
+    '\\\\': '\\', '\\"': '"', "\\'": "'",
+  }
+
+  // PowerShell uses backtick escapes
+  const PS_ESCAPES = {
+    '`n': '\n', '`r': '\r', '`t': '\t', '`a': '\x07',
+    '`b': '\x08', '`f': '\x0C', '`v': '\x0B', '`0': '\0', '``': '`',
+  }
+
+  const escapeMap = language === 'powershell' ? PS_ESCAPES : C_ESCAPES
+  let resolved = content
+
+  for (const [esc, real] of Object.entries(escapeMap)) {
+    resolved = resolved.replaceAll(esc, real)
+  }
+
+  return resolved
+}
+
+/**
  * XOR encrypt a string and return language-specific inline decryption code.
  * The decrypt function is injected ONCE per output (tracked by caller).
  *
@@ -67,54 +102,76 @@ export function generateXorKey(len) {
  * @returns {{ inline: string, needsHelper: boolean, helper: string }}
  */
 export function xorEncryptForLanguage(str, language, decryptFuncName = '_xd') {
-  const key = generateXorKey()
-  const encrypted = xorEncodeString(str, key)
+  // Resolve escape sequences to real chars before encoding
+  const resolved = resolveLanguageEscapes(str, language)
 
   switch (language) {
     case 'powershell': {
-      const dataArr = encrypted.join(',')
-      const keyArr = key.join(',')
+      // B64-first: encode resolved string to Base64 (ASCII-safe), then XOR the B64 bytes
+      // This prevents Unicode chars (>255) from breaking the [byte] cast
+      const b64 = toBase64(resolved)
+      const b64Key = generateXorKey()
+      const b64Encrypted = xorEncodeString(b64, b64Key)
+      const dataArr = b64Encrypted.join(',')
+      const keyArr = b64Key.join(',')
       return {
         inline: `(${decryptFuncName} @(${dataArr}) @(${keyArr}))`,
         needsHelper: true,
-        helper: `function ${decryptFuncName}($d,$k){$r=@();for($i=0;$i-lt$d.Length;$i++){$r+=[byte]($d[$i]-bxor$k[$i%$k.Length])};[System.Text.Encoding]::UTF8.GetString([byte[]]$r)}`,
+        // Decrypt stub: XOR → reconstruct B64 string → FromBase64String → UTF8.GetString
+        helper: `function ${decryptFuncName}($d,$k){$b="";for($i=0;$i-lt$d.Length;$i++){$b+=[char]($d[$i]-bxor$k[$i%$k.Length])};[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b))}`,
       }
     }
     case 'python': {
-      const dataArr = encrypted.join(',')
-      const keyArr = key.join(',')
+      // B64-first for Python too: safe for any Unicode input
+      const b64 = toBase64(resolved)
+      const b64Key = generateXorKey()
+      const b64Encrypted = xorEncodeString(b64, b64Key)
+      const dataArr = b64Encrypted.join(',')
+      const keyArr = b64Key.join(',')
       return {
         inline: `${decryptFuncName}([${dataArr}],[${keyArr}])`,
         needsHelper: true,
-        helper: `${decryptFuncName}=lambda d,k:''.join(chr(d[i]^k[i%len(k)])for i in range(len(d)))`,
+        helper: `${decryptFuncName}=lambda d,k:__import__('base64').b64decode(''.join(chr(d[i]^k[i%len(k)])for i in range(len(d)))).decode()`,
       }
     }
     case 'bash': {
-      // Bash XOR via printf + awk
-      const hexData = encrypted.map(b => b.toString(16).padStart(2, '0')).join(' ')
-      const hexKey = key.map(b => b.toString(16).padStart(2, '0')).join(' ')
+      // B64-first: encode resolved string to Base64 (ASCII-safe), then XOR the B64 bytes
+      const b64 = toBase64(resolved)
+      const b64Key = generateXorKey()
+      const b64Encrypted = xorEncodeString(b64, b64Key)
+      const hexData = b64Encrypted.map(b => b.toString(16).padStart(2, '0')).join(' ')
+      const hexKey = b64Key.map(b => b.toString(16).padStart(2, '0')).join(' ')
       return {
         inline: `$(${decryptFuncName} "${hexData}" "${hexKey}")`,
         needsHelper: true,
-        helper: `${decryptFuncName}(){ local d=($1) k=($2) r=""; for((i=0;i<\${#d[@]};i++)); do r+=$(printf "\\\\x$(printf '%02x' $((0x\${d[$i]}^0x\${k[$((i%\${#k[@]}))]})))"); done; printf "$r"; }`,
+        // Decrypt stub: XOR → reconstruct B64 string → base64 -d
+        helper: `${decryptFuncName}(){ local d=($1) k=($2) r=""; for((i=0;i<\${#d[@]};i++)); do r+=$(printf "\\\\x$(printf '%02x' $((0x\${d[$i]}^0x\${k[$((i%\${#k[@]}))]})))"); done; echo "$r" | base64 -d; }`,
       }
     }
     case 'csharp': {
-      const dataArr = encrypted.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
-      const keyArr = key.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
+      // B64-first: encode resolved string to Base64 (ASCII-safe), then XOR the B64 bytes
+      const b64 = toBase64(resolved)
+      const b64Key = generateXorKey()
+      const b64Encrypted = xorEncodeString(b64, b64Key)
+      const dataArr = b64Encrypted.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
+      const keyArr = b64Key.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
       return {
         inline: `${decryptFuncName}(new byte[]{${dataArr}},new byte[]{${keyArr}})`,
         needsHelper: true,
-        helper: `static string ${decryptFuncName}(byte[]d,byte[]k){var r=new byte[d.Length];for(int i=0;i<d.Length;i++)r[i]=(byte)(d[i]^k[i%k.Length]);return System.Text.Encoding.UTF8.GetString(r);}`,
+        helper: `static string ${decryptFuncName}(byte[]d,byte[]k){var r=new byte[d.Length];for(int i=0;i<d.Length;i++)r[i]=(byte)(d[i]^k[i%k.Length]);return System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String(System.Text.Encoding.ASCII.GetString(r)));}`,
       }
     }
     case 'go': {
-      const dataArr = encrypted.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
-      const keyArr = key.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
+      // B64-first: encode resolved string to Base64 (ASCII-safe), then XOR the B64 bytes
+      const b64 = toBase64(resolved)
+      const b64Key = generateXorKey()
+      const b64Encrypted = xorEncodeString(b64, b64Key)
+      const dataArr = b64Encrypted.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
+      const keyArr = b64Key.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(',')
       return {
         inline: `${decryptFuncName}([]byte{${dataArr}},[]byte{${keyArr}})`,
         needsHelper: true,
-        helper: `func ${decryptFuncName}(d,k[]byte)string{r:=make([]byte,len(d));for i:=range d{r[i]=d[i]^k[i%len(k)]};return string(r)}`,
+        helper: `func ${decryptFuncName}(d,k[]byte)string{r:=make([]byte,len(d));for i:=range d{r[i]=d[i]^k[i%len(k)]};b,_:=base64.StdEncoding.DecodeString(string(r));return string(b)}`,
       }
     }
     default:

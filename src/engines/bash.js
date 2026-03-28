@@ -9,7 +9,7 @@
  * - Unicode → force Base64
  */
 
-import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
+import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding'
 import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
 import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
 
@@ -137,8 +137,9 @@ function applyVariableRandomization(code) {
 
 /* ── Encode a single static text segment for Bash ────────── */
 
-function encodeStaticBash(text) {
-  if (!text) return ''
+function encodeStaticBash(rawText) {
+  if (!rawText) return ''
+  const text = resolveLanguageEscapes(rawText, 'bash')
   if (hasUnicode(text)) {
     return `$(echo "${toBase64(text)}" | base64 -d)`
   }
@@ -284,14 +285,17 @@ function shufArr(arr) {
 
 /* ── Stealth Execution (v4.7) ────────────────────────────── */
 
-function stealthEval(decodedExpr) {
+function stealthEval(funcCallExpr) {
+  // funcCallExpr is the function call that returns the decoded string,
+  // e.g. the function name like: echo "$(func)" | base64 -d
+  // We always use eval with double quotes to ensure command substitution works
+  // and the function remains in scope (no subshell/pipe issues).
+  const rv = randomVarName('short').toLowerCase()
   const methods = [
-    // eval direct (safest — no nested quoting issues)
-    () => `eval "${decodedExpr}"`,
-    // printf + bash pipe (single-quoted to avoid nested double-quote issues)
-    () => `printf '%s' '${decodedExpr.replace(/'/g, "'\\''")}'  | bash`,
-    // bash -c with escaped inner quotes
-    () => `bash -c "$(echo '${decodedExpr.replace(/'/g, "'\\''")}')"`,
+    // eval with command substitution (direct)
+    () => `eval "$(${funcCallExpr})"`,
+    // assign to variable, then eval (adds indirection)
+    () => `${rv}=$(${funcCallExpr})\neval "$${rv}"`,
   ]
   return methods[Math.floor(Math.random() * methods.length)]()
 }
@@ -338,14 +342,16 @@ ${bashLoopJunk(iv)}
     echo "$_r"
 }
 
-${stealthEval(`$(echo "$(${fv})" | base64 -d)`)}
+${stealthEval(`echo "$(${fv})" | base64 -d`)}
 `
 }
 
-/* Method 2: Hex-Shift */
+/* Method 2: Hex-Shift (B64-first for Unicode safety) */
 function bashWrapperHexShift(code) {
   const shift = 3 + Math.floor(Math.random() * 25)
-  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+  // B64-first: encode to Base64 (ASCII-safe) THEN hex-shift
+  const b64 = toBase64(code)
+  const hexStr = Array.from(b64).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
 
   const dv = randomVarName('short').toLowerCase()
   const sv = randomVarName('short').toLowerCase()
@@ -372,7 +378,7 @@ ${fv}() {
     echo "$_r"
 }
 
-${stealthEval(`$(${fv})`)}
+${stealthEval(`echo "$(${fv})" | base64 -d`)}
 `
 }
 
@@ -405,6 +411,6 @@ ${fv}() {
     echo "$_r"
 }
 
-${stealthEval(`$(echo "$(${fv})" | base64 -d)`)}
+${stealthEval(`echo "$(${fv})" | base64 -d`)}
 `
 }
