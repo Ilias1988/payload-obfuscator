@@ -124,6 +124,18 @@ npm run test:csharp
 
 On Windows, the Bash suite uses WSL. The C# suite uses an available C# compiler. Runtime versions and supported syntax can affect results.
 
+## Deployment
+
+GitHub Actions runs lint, semantic tests, and a production build for every push
+to `main`. After CI succeeds, the Pages workflow publishes `dist/` to the
+`gh-pages` branch. The custom domain is preserved through `public/CNAME`.
+
+For an authorized manual deployment from a clean local checkout:
+
+```bash
+npm run deploy
+```
+
 ## Architecture
 
 ```text
