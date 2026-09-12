@@ -34,11 +34,6 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test PowerShell engine
-        env:
-          PO_TEST_QUICK: '1'
-        run: npm run test:powershell
-
       - name: Test Python engine
         run: npm run test:python
 
@@ -48,7 +43,7 @@ jobs:
       - name: Build production site
         run: npm run build
 
-  csharp-tests:
+  windows-runtime-tests:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -63,6 +58,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test PowerShell engine
+        env:
+          PO_TEST_QUICK: '1'
+        run: npm run test:powershell
 
       - name: Test C# engine
         run: npm run test:csharp
