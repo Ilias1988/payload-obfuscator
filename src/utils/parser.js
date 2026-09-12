@@ -212,10 +212,51 @@ function tryString(code, i, language) {
     // Regular quoted strings with prefix
     if (prefix && (sch === '"' || sch === "'")) {
       let j = si + 1
+      const isFString = prefix.toLowerCase().includes('f')
+      let braceDepth = 0
+      let expressionQuote = ''
       while (j < code.length) {
+        if (isFString && braceDepth > 0 && expressionQuote) {
+          if (code[j] === '\\' && j + 1 < code.length) {
+            j += 2
+            continue
+          }
+          if (code.startsWith(expressionQuote, j)) {
+            j += expressionQuote.length
+            expressionQuote = ''
+            continue
+          }
+          j++
+          continue
+        }
         if (code[j] === '\\' && j + 1 < code.length) {
           j += 2
           continue
+        }
+        if (isFString) {
+          if (braceDepth === 0 && code[j] === '{' && code[j + 1] === '{') {
+            j += 2
+            continue
+          }
+          if (braceDepth === 0 && code[j] === '}' && code[j + 1] === '}') {
+            j += 2
+            continue
+          }
+          if (code[j] === '{') {
+            braceDepth++
+            j++
+            continue
+          }
+          if (braceDepth > 0 && code[j] === '}') {
+            braceDepth--
+            j++
+            continue
+          }
+          if (braceDepth > 0 && (code[j] === '"' || code[j] === "'")) {
+            expressionQuote = code.startsWith(code[j].repeat(3), j) ? code[j].repeat(3) : code[j]
+            j += expressionQuote.length
+            continue
+          }
         }
         if (code[j] === sch) break
         j++
@@ -249,12 +290,91 @@ function tryString(code, i, language) {
     }
   }
 
+  // C# interpolated verbatim strings $@"..." and @$"...". Preserve their
+  // contents as one token; the C# engine currently leaves this string form
+  // intact while still allowing identifier updates inside placeholders.
+  if (language === 'csharp' && (code.startsWith('$@"', i) || code.startsWith('@$"', i))) {
+    const opener = code.substring(i, i + 3)
+    let j = i + 3
+    let braceDepth = 0
+    let expressionQuote = ''
+    let verbatimExpressionString = false
+    while (j < code.length) {
+      if (expressionQuote) {
+        if (verbatimExpressionString && code[j] === '"' && code[j + 1] === '"') { j += 2; continue }
+        if (!verbatimExpressionString && code[j] === '\\' && j + 1 < code.length) { j += 2; continue }
+        if (code[j] === expressionQuote) {
+          expressionQuote = ''
+          verbatimExpressionString = false
+        }
+        j++
+        continue
+      }
+      if (braceDepth > 0) {
+        if (code[j] === '@' && code[j + 1] === '"') {
+          expressionQuote = '"'
+          verbatimExpressionString = true
+          j += 2
+          continue
+        }
+        if (code[j] === '"' || code[j] === "'") { expressionQuote = code[j++]; continue }
+        if (code[j] === '{') braceDepth++
+        else if (code[j] === '}') braceDepth--
+        j++
+        continue
+      }
+      if (code[j] === '"' && code[j + 1] === '"') { j += 2; continue }
+      if (code[j] === '{' && code[j + 1] === '{') { j += 2; continue }
+      if (code[j] === '{') { braceDepth = 1; j++; continue }
+      if (code[j] === '"') break
+      j++
+    }
+    const realEnd = Math.min(j + 1, code.length)
+    return {
+      value: code.substring(i + 3, j),
+      quoteChar: opener,
+      prefix: opener.substring(0, 2),
+      raw: code.substring(i, realEnd),
+      end: realEnd,
+    }
+  }
+
   // C# interpolated strings $"..."
   if (language === 'csharp' && ch === '$' && code[i + 1] === '"') {
     let j = i + 2
-    const escapeChar = '\\'
+    let braceDepth = 0
+    let expressionQuote = ''
+    let verbatimExpressionString = false
     while (j < code.length) {
-      if (code[j] === escapeChar && j + 1 < code.length) { j += 2; continue }
+      if (expressionQuote) {
+        if (verbatimExpressionString && code[j] === '"' && code[j + 1] === '"') { j += 2; continue }
+        if (!verbatimExpressionString && code[j] === '\\' && j + 1 < code.length) { j += 2; continue }
+        if (code[j] === expressionQuote) {
+          expressionQuote = ''
+          verbatimExpressionString = false
+        }
+        j++
+        continue
+      }
+      if (braceDepth > 0) {
+        if (code[j] === '@' && code[j + 1] === '"') {
+          expressionQuote = '"'
+          verbatimExpressionString = true
+          j += 2
+          continue
+        }
+        if (code[j] === '"' || code[j] === "'") {
+          expressionQuote = code[j++]
+          continue
+        }
+        if (code[j] === '{') braceDepth++
+        else if (code[j] === '}') braceDepth--
+        j++
+        continue
+      }
+      if (code[j] === '\\' && j + 1 < code.length) { j += 2; continue }
+      if (code[j] === '{' && code[j + 1] === '{') { j += 2; continue }
+      if (code[j] === '{') { braceDepth = 1; j++; continue }
       if (code[j] === '"') break
       j++
     }
@@ -292,6 +412,41 @@ function tryString(code, i, language) {
     }
   }
 
+  // Bash heredoc: preserve the operator, body, and terminator as one token.
+  // The body may intentionally contain shell-looking text that must not be
+  // treated as executable code by obfuscation layers.
+  if (language === 'bash' && ch === '<' && code[i + 1] === '<' && code[i + 2] !== '<') {
+    const headerEnd = code.indexOf('\n', i)
+    if (headerEnd !== -1) {
+      const header = code.substring(i, headerEnd).replace(/\r$/, '')
+      const match = /^<<(-)?\s*(?:(['"])([^'"\r\n]+)\2|\\?([a-zA-Z_][a-zA-Z0-9_]*))/.exec(header)
+      if (match) {
+        const stripTabs = Boolean(match[1])
+        const delimiter = match[3] || match[4]
+        let lineStart = headerEnd + 1
+        while (lineStart <= code.length) {
+          const nextNewline = code.indexOf('\n', lineStart)
+          const lineEnd = nextNewline === -1 ? code.length : nextNewline
+          let line = code.substring(lineStart, lineEnd).replace(/\r$/, '')
+          if (stripTabs) line = line.replace(/^\t+/, '')
+          if (line === delimiter) {
+            const realEnd = nextNewline === -1 ? lineEnd : nextNewline + 1
+            const raw = code.substring(i, realEnd)
+            return {
+              value: raw,
+              quoteChar: 'heredoc',
+              prefix: match[2] ? 'quoted' : 'unquoted',
+              raw,
+              end: realEnd,
+            }
+          }
+          if (nextNewline === -1) break
+          lineStart = nextNewline + 1
+        }
+      }
+    }
+  }
+
   // Bash $'...' (ANSI-C quoting - don't touch)
   if (language === 'bash' && ch === '$' && code[i + 1] === "'") {
     let j = i + 2
@@ -324,6 +479,26 @@ function tryString(code, i, language) {
     while (j < code.length) {
       if (code[j] === escapeChar && j + 1 < code.length) {
         j += 2 // skip escape sequence
+        continue
+      }
+      // Bash: quotes inside $(...) belong to the nested command and must not
+      // terminate the surrounding double-quoted string.
+      if (language === 'bash' && ch === '"' && code[j] === '$' && code[j + 1] === '(') {
+        let depth = 1
+        let nestedQuote = ''
+        j += 2
+        while (j < code.length && depth > 0) {
+          if (code[j] === '\\' && j + 1 < code.length) { j += 2; continue }
+          if (nestedQuote) {
+            if (code[j] === nestedQuote) nestedQuote = ''
+            j++
+            continue
+          }
+          if (code[j] === '"' || code[j] === "'") { nestedQuote = code[j++]; continue }
+          if (code[j] === '(') depth++
+          else if (code[j] === ')') depth--
+          j++
+        }
         continue
       }
       // PowerShell: skip over $(...) subexpressions which may contain nested quotes
@@ -363,6 +538,8 @@ function tryString(code, i, language) {
  * @returns {boolean}
  */
 export function hasUnicode(str) {
+  // The control-character range intentionally defines the ASCII boundary.
+  // eslint-disable-next-line no-control-regex
   return /[^\x00-\x7F]/.test(str)
 }
 
@@ -376,16 +553,24 @@ export function hasInterpolation(content, language) {
   switch (language) {
     case 'powershell':
       // $var, ${var}, $(expr)
-      return /\$[a-zA-Z_{\(]/.test(content)
+      return /\$[a-zA-Z_{(]/.test(content)
     case 'bash':
       // $var, ${var}, $(cmd), `cmd`
-      return /\$[a-zA-Z_{\(]/.test(content) || /`[^`]+`/.test(content)
+      return /\$(?:[a-zA-Z_{(0-9@*#?$!_-])/.test(content) || /`[^`]+`/.test(content)
     case 'csharp':
-      // {varName} inside interpolated $"..." strings
-      return /\{[a-zA-Z_][^}]*\}/.test(content)
+      // Any non-escaped {expression} inside an interpolated string.
+      for (let i = 0; i < content.length; i++) {
+        if (content[i] === '{' && content[i + 1] === '{') { i++; continue }
+        if (content[i] === '{') return true
+      }
+      return false
     case 'python':
-      // {expr} inside f-strings — but not {{ (escaped braces)
-      return /(?<!\{)\{[a-zA-Z_][^}]*\}(?!\})/.test(content)
+      // Any non-escaped {expr} inside an f-string, including numeric/call expressions.
+      for (let i = 0; i < content.length; i++) {
+        if (content[i] === '{' && content[i + 1] === '{') { i++; continue }
+        if (content[i] === '{') return true
+      }
+      return false
     default:
       return false
   }
@@ -400,9 +585,6 @@ export function hasInterpolation(content, language) {
  * @returns {{ type: 'static' | 'var', value: string }[]}
  */
 export function splitInterpolatedString(content, language) {
-  const segments = []
-  let i = 0
-
   switch (language) {
     case 'powershell':
       return splitPowerShellInterpolation(content)
@@ -459,6 +641,10 @@ function splitPowerShellInterpolation(content) {
         while (j < content.length && /[a-zA-Z0-9_]/.test(content[j])) j++
         segments.push({ type: 'var', value: content.substring(i, j) })
         i = j
+      } else if (/[0-9@*#?$!_-]/.test(content[i + 1] || '')) {
+        // Positional and special parameters: $1, $@, $?, $$, etc.
+        segments.push({ type: 'var', value: content.substring(i, i + 2) })
+        i += 2
       } else {
         // Lone $ — keep as static
         staticBuf += '$'
@@ -514,6 +700,10 @@ function splitBashInterpolation(content) {
         while (j < content.length && /[a-zA-Z0-9_]/.test(content[j])) j++
         segments.push({ type: 'var', value: content.substring(i, j) })
         i = j
+      } else if (/[0-9@*#?$!_-]/.test(content[i + 1] || '')) {
+        // Positional and special parameters: $1, $@, $?, $$, etc.
+        segments.push({ type: 'var', value: content.substring(i, i + 2) })
+        i += 2
       } else {
         staticBuf += '$'
         i++
@@ -615,9 +805,34 @@ function splitCSharpInterpolation(content) {
         if (content[j] === '}') depth--
         j++
       }
-      // Extract the expression inside {} (without braces)
-      const expr = content.substring(i + 1, j - 1)
-      segments.push({ type: 'var', value: expr })
+      // Separate the expression from optional alignment/format text. Only a
+      // top-level comma or colon is a format separator; nested calls/indexers
+      // and quoted strings remain part of the expression.
+      const fullExpr = content.substring(i + 1, j - 1)
+      let separator = -1
+      let nestedDepth = 0
+      let quote = ''
+      let escaped = false
+      for (let k = 0; k < fullExpr.length; k++) {
+        const current = fullExpr[k]
+        if (escaped) { escaped = false; continue }
+        if (quote && current === '\\') { escaped = true; continue }
+        if (current === '"' || current === "'") {
+          if (!quote) quote = current
+          else if (quote === current) quote = ''
+          continue
+        }
+        if (quote) continue
+        if (current === '(' || current === '[' || current === '{') nestedDepth++
+        else if (current === ')' || current === ']' || current === '}') nestedDepth--
+        else if (nestedDepth === 0 && (current === ',' || current === ':')) {
+          separator = k
+          break
+        }
+      }
+      const expr = (separator === -1 ? fullExpr : fullExpr.substring(0, separator)).trim()
+      const format = separator === -1 ? '' : fullExpr.substring(separator)
+      segments.push({ type: 'var', value: expr, format })
       i = j
     } else {
       staticBuf += content[i]

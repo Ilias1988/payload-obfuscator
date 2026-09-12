@@ -9,9 +9,9 @@
  * - Unicode → force Base64
  */
 
-import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding'
-import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding.js'
+import { randomVarName, generateDeadCode, randomXorKey } from '../utils/randomization.js'
+import { tokenize, tokensToCode, transformStrings, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser.js'
 
 export function obfuscateBash(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -38,6 +38,64 @@ export function obfuscateBash(code, layers = []) {
   }
 
   return result
+}
+
+function bashTokenRaw(token) {
+  if (token.type !== 'string') return token.value
+  return token.raw || `${token.quoteChar}${token.value}${token.quoteChar}`
+}
+
+function maskBashNonCode(code) {
+  return tokenize(code, 'bash').map((token) => {
+    if (token.type === 'code') return token.value
+    return bashTokenRaw(token).replace(/[^\r\n]/g, ' ')
+  }).join('')
+}
+
+function insertBashPreamble(code, preamble) {
+  const match = /^(#![^\r\n]*(?:\r?\n)?)/.exec(code)
+  if (!match) return `${preamble}\n${code}`
+  return `${match[1]}${preamble}\n${code.slice(match[1].length)}`
+}
+
+function transformArithmeticRegions(text, transform) {
+  let output = ''
+  let cursor = 0
+
+  while (cursor < text.length) {
+    const dollarStart = text.indexOf('$((', cursor)
+    const plainStart = text.indexOf('((', cursor)
+    let start = -1
+    let openerLength = 0
+    if (dollarStart !== -1 && (plainStart === -1 || dollarStart <= plainStart)) {
+      start = dollarStart
+      openerLength = 3
+    } else if (plainStart !== -1) {
+      start = plainStart
+      openerLength = 2
+    }
+    if (start === -1) {
+      output += text.slice(cursor)
+      break
+    }
+
+    output += text.slice(cursor, start + openerLength)
+    let depth = 2
+    let end = start + openerLength
+    for (; end < text.length; end++) {
+      if (text[end] === '(') depth++
+      else if (text[end] === ')' && --depth === 0) break
+    }
+    if (depth !== 0) {
+      output += text.slice(start + openerLength)
+      break
+    }
+
+    output += transform(text.slice(start + openerLength, end - 1)) + '))'
+    cursor = end + 1
+  }
+
+  return output
 }
 
 /* ── Variable Randomization + Command Obfuscation ────────── */
@@ -72,16 +130,49 @@ function applyVariableRandomization(code) {
   const tokens = tokenize(code, 'bash')
   const varMap = {}
 
+  // Indirection and runtime-loaded shell code depend on identifier spellings.
+  // Without a full Bash scope/AST model, renaming must safely become a no-op.
+  if (/\b(?:eval|source)\b|(?:declare|local|typeset)\s+-[a-zA-Z]*n|\$\{!/.test(code)) {
+    return code
+  }
+
   for (const token of tokens) {
     if (token.type !== 'code') continue
     const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)=/g
     let match
     while ((match = varPattern.exec(token.value)) !== null) {
       const varName = match[1]
-      if (!reserved.has(varName) && !varMap[varName] && varName.length > 1) {
+      if (!reserved.has(varName) && !/^[A-Z_][A-Z0-9_]*$/.test(varName) && !varMap[varName] && varName.length > 1) {
         varMap[varName] = randomVarName('short').toLowerCase()
       }
     }
+  }
+
+  // Do not rename a variable referenced inside a single-quoted data/code
+  // string because Bash does not interpolate it there.
+  for (const token of tokens) {
+    if (token.type !== 'string' || token.quoteChar !== "'") continue
+    for (const varName of Object.keys(varMap)) {
+      const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      if (new RegExp(`\\$${escaped}\\b|\\$\\{[!#]?${escaped}(?=[^a-zA-Z0-9_]|$)`).test(token.value)) {
+        delete varMap[varName]
+      }
+    }
+  }
+
+  // Several Bash builtins take variable names as bare words rather than
+  // expansions. Protect those names unless a full shell AST is available.
+  const maskedCode = maskBashNonCode(code)
+  for (const varName of Object.keys(varMap)) {
+    const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const bareTargetPatterns = [
+      new RegExp(`\\b(?:for|select)\\s+${escaped}\\b`),
+      new RegExp(`\\bprintf\\s+-v\\s+${escaped}\\b`),
+      new RegExp(`\\b(?:read|mapfile|readarray|getopts)\\b[^\\r\\n;]*\\b${escaped}\\b`),
+      new RegExp(`\\bunset\\s+(?:-[^\\s]+\\s+)*${escaped}\\b`),
+      new RegExp(`\\b(?:export|readonly|local|declare|typeset)\\s+(?:-[^\\s]+\\s+)*${escaped}\\b(?!\\s*=)`),
+    ]
+    if (bareTargetPatterns.some((pattern) => pattern.test(maskedCode))) delete varMap[varName]
   }
 
   if (Object.keys(varMap).length === 0) return code
@@ -92,10 +183,20 @@ function applyVariableRandomization(code) {
   const renameVarsInText = (text) => {
     let result = text
     for (const varName of sortedVars) {
-      const braceRegex = new RegExp('\\$\\{' + varName + '\\}', 'g')
+      const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const braceRegex = new RegExp('\\$\\{([!#]?)' + escaped + '(?=\\}|\\[|[:#%/\\^,=+?@*\\-])', 'g')
       const useRegex = new RegExp('\\$' + varName + '\\b', 'g')
-      result = result.replace(braceRegex, '${' + varMap[varName] + '}')
+      result = result.replace(braceRegex, (_match, modifier) => '${' + modifier + varMap[varName])
       result = result.replace(useRegex, '$' + varMap[varName])
+    }
+    return result
+  }
+
+  const renameArithmeticNames = (expression) => {
+    let result = expression
+    for (const varName of sortedVars) {
+      const regex = new RegExp('\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
+      result = result.replace(regex, varMap[varName])
     }
     return result
   }
@@ -104,10 +205,14 @@ function applyVariableRandomization(code) {
   const renameInCode = (codeSegment) => {
     let result = codeSegment
     for (const varName of sortedVars) {
-      const assignRegex = new RegExp('\\b' + varName + '=', 'g')
-      result = result.replace(assignRegex, varMap[varName] + '=')
+      // Bash arrays can be assigned through indexed targets such as
+      // values[$key]=... and values[$key]+=.... Rename the bare target as well
+      // as $values/${values[...]}/arithmetic references.
+      const assignRegex = new RegExp('\\b' + varName + '(\\[[^\\]\\r\\n]*\\])?(\\s*)([+\\-*/%&|^]?=)', 'g')
+      result = result.replace(assignRegex, varMap[varName] + '$1$2$3')
     }
     result = renameVarsInText(result)
+    result = transformArithmeticRegions(result, renameArithmeticNames)
     // Command obfuscation
     for (const cmd of OBFUSCATABLE_COMMANDS) {
       const cmdRegex = new RegExp('(?<=^|\\||;|\\$\\(|`)\\s*' + cmd + '\\b', 'gm')
@@ -126,8 +231,12 @@ function applyVariableRandomization(code) {
     }
     // Rename inside double-quoted strings (bash interpolates these)
     if (token.type === 'string' && token.quoteChar === '"') {
-      const newValue = renameVarsInText(token.value)
+      const newValue = transformArithmeticRegions(renameVarsInText(token.value), renameArithmeticNames)
       return { ...token, value: newValue, raw: `"${newValue}"` }
+    }
+    if (token.type === 'string' && token.quoteChar === 'heredoc' && token.prefix === 'unquoted') {
+      const newValue = transformArithmeticRegions(renameVarsInText(token.value), renameArithmeticNames)
+      return { ...token, value: newValue, raw: newValue }
     }
     return token
   })
@@ -139,7 +248,7 @@ function applyVariableRandomization(code) {
 
 function encodeStaticBash(rawText) {
   if (!rawText) return ''
-  const text = resolveLanguageEscapes(rawText, 'bash')
+  const text = rawText
   if (hasUnicode(text)) {
     return `$(echo "${toBase64(text)}" | base64 -d)`
   }
@@ -157,8 +266,10 @@ function applyStringEncoding(code) {
   const tokens = tokenize(code, 'bash')
 
   const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === 'heredoc') return content
     if (quoteChar === "$'") return `$'${content}'`
     if (quoteChar === "'") return `'${content}'`
+    if (content.includes('\\') || content.endsWith('\n')) return `"${content}"`
 
     // Interpolation-aware: split into static + variable segments
     if (hasInterpolation(content, 'bash')) {
@@ -169,11 +280,11 @@ function applyStringEncoding(code) {
         if (seg.value.length === 0) return ''
         return encodeStaticBash(seg.value)
       }).filter(p => p.length > 0)
-      return parts.join('')
+      return `"${parts.join('')}"`
     }
 
     // No interpolation — encode entire string
-    return encodeStaticBash(content)
+    return `"${encodeStaticBash(content)}"`
   })
 
   return tokensToCode(transformed)
@@ -187,9 +298,11 @@ function applyXorStringEncryption(code) {
   const tokens = tokenize(code, 'bash')
 
   const transformed = transformStrings(tokens, (content, quoteChar) => {
+    if (quoteChar === 'heredoc') return content
     if (quoteChar === "$'" || quoteChar === "'") {
       return quoteChar === "'" ? `'${content}'` : `$'${content}'`
     }
+    if (content.includes('\\') || content.endsWith('\n')) return `"${content}"`
     if (content.length < 3) return `"${content}"`
 
     // Interpolation-aware XOR
@@ -202,18 +315,18 @@ function applyXorStringEncryption(code) {
         if (!helperInjected) helperInjected = true
         return xor.inline
       }).filter(p => p.length > 0)
-      return parts.join('')
+      return `"${parts.join('')}"`
     }
 
     const xor = xorEncryptForLanguage(content, 'bash', funcName)
     if (!helperInjected) helperInjected = true
-    return xor.inline
+    return `"${xor.inline}"`
   })
 
   let result = tokensToCode(transformed)
   if (helperInjected) {
     const helper = xorEncryptForLanguage('x', 'bash', funcName).helper
-    result = helper + '\n' + result
+    result = insertBashPreamble(result, helper)
   }
   return result
 }
@@ -222,12 +335,32 @@ function applyXorStringEncryption(code) {
 
 function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
+  const maskedLines = maskBashNonCode(code).split('\n')
   const result = []
+  let openParens = 0
+  let caseDepth = 0
 
   for (let i = 0; i < lines.length; i++) {
-    result.push(lines[i])
+    const line = lines[i]
+    const maskedLine = maskedLines[i] || ''
+    const trimmed = maskedLine.trim()
+    result.push(line)
+
+    if (/^case\b.*\bin\s*$/.test(trimmed)) caseDepth++
+    if (/^esac\b/.test(trimmed)) caseDepth = Math.max(0, caseDepth - 1)
+    for (const ch of maskedLine) {
+      if (ch === '(' || ch === '[') openParens++
+      else if (ch === ')' || ch === ']') openParens = Math.max(0, openParens - 1)
+    }
+
+    const nextTrimmed = (maskedLines[i + 1] || '').trim()
+    const structural = /^(?:if|then|elif|else|fi|for|while|until|select|do|done|case|esac|function)\b/.test(trimmed) ||
+      /^(?:then|do|else|elif|fi|done|esac|\|\||&&|\|)/.test(nextTrimmed) ||
+      /(?:\\|\||\|\||&&)$/.test(trimmed) || trimmed.endsWith('{') || trimmed === '}'
+
+    if (openParens > 0 || caseDepth > 0 || structural || !trimmed) continue
     if (i > 0 && i % (2 + Math.floor(Math.random() * 3)) === 0) {
-      if (isSafeForInjection(lines[i], 'bash')) {
+      if (isSafeForInjection(maskedLine, 'bash')) {
         result.push(generateDeadCode('bash'))
       }
     }
@@ -242,16 +375,15 @@ function applyAntiAnalysis(code) {
   const v1 = randomVarName('short').toLowerCase()
   const sleepSec = 1 + Math.floor(Math.random() * 3)
 
-  return `#!/bin/bash
-# Environment validation
+  const preamble = `# Environment validation
 ${v1}=$(nproc 2>/dev/null || echo 1)
 [ "$${v1}" -lt 2 ] && exit 0
 sleep ${sleepSec}
 if [ -f /proc/self/status ]; then
   grep -qi "TracerPid:[[:space:]]*[1-9]" /proc/self/status && exit 0
 fi
-
-${code}`
+`
+  return insertBashPreamble(code, preamble)
 }
 
 /* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */

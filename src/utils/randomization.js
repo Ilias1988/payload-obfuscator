@@ -155,12 +155,12 @@ export function generateDeadCode(language) {
     }
     case 'csharp': {
       const snippets = [
-        `var ${varName} = DateTime.UtcNow.Ticks; _ = ${varName};`,
-        `var ${varName} = Environment.ProcessorCount; _ = ${varName};`,
-        `var ${varName} = System.IO.Path.GetTempPath(); _ = ${varName}.Length;`,
+        `var ${varName} = DateTime.UtcNow.Ticks; GC.KeepAlive(${varName});`,
+        `var ${varName} = Environment.ProcessorCount; GC.KeepAlive(${varName});`,
+        `var ${varName} = System.IO.Path.GetTempPath(); GC.KeepAlive(${varName});`,
         `GC.Collect(0, GCCollectionMode.Optimized);`,
-        `var ${varName} = System.Diagnostics.Process.GetCurrentProcess().Id; _ = ${varName};`,
-        `var ${varName} = new System.Random().Next(1, ${num + 100}); _ = ${varName};`,
+        `var ${varName} = System.Diagnostics.Process.GetCurrentProcess().Id; GC.KeepAlive(${varName});`,
+        `var ${varName} = new System.Random().Next(1, ${num + 100}); GC.KeepAlive(${varName});`,
         `System.Threading.Thread.Yield();`,
       ]
       return snippets[Math.floor(Math.random() * snippets.length)]

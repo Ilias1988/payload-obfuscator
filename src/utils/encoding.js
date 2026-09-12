@@ -78,11 +78,79 @@ export function resolveLanguageEscapes(content, language) {
 
   // PowerShell uses backtick escapes
   const PS_ESCAPES = {
-    '`n': '\n', '`r': '\r', '`t': '\t', '`a': '\x07',
-    '`b': '\x08', '`f': '\x0C', '`v': '\x0B', '`0': '\0', '``': '`',
+    n: '\n', r: '\r', t: '\t', a: '\x07', b: '\x08',
+    f: '\x0C', v: '\x0B', 0: '\0', e: '\x1B',
+    '`': '`', '"': '"', '$': '$',
   }
 
-  const escapeMap = language === 'powershell' ? PS_ESCAPES : C_ESCAPES
+  if (language === 'powershell') {
+    let resolved = ''
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] !== '`' || i + 1 >= content.length) {
+        resolved += content[i]
+        continue
+      }
+
+      const escaped = content[i + 1]
+      if (Object.prototype.hasOwnProperty.call(PS_ESCAPES, escaped)) {
+        resolved += PS_ESCAPES[escaped]
+        i++
+      } else if (escaped === '\r' && content[i + 2] === '\n') {
+        i += 2
+      } else if (escaped === '\n') {
+        i++
+      } else {
+        // Unknown PowerShell escape: preserve it exactly.
+        resolved += '`' + escaped
+        i++
+      }
+    }
+    return resolved
+  }
+
+  if (language === 'csharp') {
+    const simpleEscapes = {
+      "'": "'", '"': '"', '\\': '\\', 0: '\0', a: '\x07', b: '\x08',
+      f: '\x0C', n: '\n', r: '\r', t: '\t', v: '\x0B',
+    }
+    let resolved = ''
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] !== '\\' || i + 1 >= content.length) {
+        resolved += content[i]
+        continue
+      }
+
+      const kind = content[i + 1]
+      if (Object.prototype.hasOwnProperty.call(simpleEscapes, kind)) {
+        resolved += simpleEscapes[kind]
+        i++
+        continue
+      }
+
+      const maxDigits = kind === 'u' ? 4 : kind === 'U' ? 8 : kind === 'x' ? 4 : 0
+      const minDigits = kind === 'x' ? 1 : maxDigits
+      if (maxDigits > 0) {
+        const candidate = content.slice(i + 2, i + 2 + maxDigits)
+        const match = new RegExp(`^[0-9a-fA-F]{${minDigits},${maxDigits}}`).exec(candidate)
+        if (match && (kind === 'x' || match[0].length === maxDigits)) {
+          const codePoint = Number.parseInt(match[0], 16)
+          if (codePoint <= 0x10FFFF) {
+            resolved += String.fromCodePoint(codePoint)
+            i += 1 + match[0].length
+            continue
+          }
+        }
+      }
+
+      // Preserve invalid/unknown escapes so malformed input is not silently
+      // changed into a different program.
+      resolved += '\\' + kind
+      i++
+    }
+    return resolved
+  }
+
+  const escapeMap = C_ESCAPES
   let resolved = content
 
   for (const [esc, real] of Object.entries(escapeMap)) {

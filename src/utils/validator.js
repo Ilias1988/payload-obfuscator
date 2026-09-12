@@ -93,18 +93,13 @@ function checkBalancedQuotes(code) {
 
   // Count unescaped double quotes (rough check)
   let doubleCount = 0
-  let singleCount = 0
   for (let i = 0; i < code.length; i++) {
     if (code[i] === '"' && (i === 0 || code[i - 1] !== '\\')) doubleCount++
-    if (code[i] === "'" && (i === 0 || code[i - 1] !== '\\')) singleCount++
   }
 
   if (doubleCount % 2 !== 0) {
     errors.push(`Odd number of double quotes (${doubleCount}) — possible unclosed string`)
   }
-  // Single quotes can be odd in some languages (contractions, PowerShell), so only warn
-  // if count is very unbalanced
-
   return { valid: errors.length === 0, errors }
 }
 
@@ -114,6 +109,8 @@ function checkBalancedQuotes(code) {
  * @returns {boolean}
  */
 export function containsUnicode(str) {
+  // The control-character range intentionally defines the ASCII boundary.
+  // eslint-disable-next-line no-control-regex
   return /[^\x00-\x7F]/.test(str)
 }
 

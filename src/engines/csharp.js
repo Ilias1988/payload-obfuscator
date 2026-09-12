@@ -10,14 +10,18 @@
  * - Unicode → force Base64
  */
 
-import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding'
-import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
-import { applyControlFlowFlattening } from './controlflow'
-import { generateCSAmsiEtwBlock } from './amsi'
+import { toBase64, xorEncryptForLanguage, resolveLanguageEscapes } from '../utils/encoding.js'
+import { randomVarName, randomFuncName, generateDeadCode } from '../utils/randomization.js'
+import { tokenize, tokensToCode, transformStrings, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser.js'
+import { applyControlFlowFlattening } from './controlflow.js'
+import { generateCSAmsiEtwBlock } from './amsi.js'
 
 export function obfuscateCSharp(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
+
+  // C# 11 raw/interpolated raw strings require delimiter-aware parsing. Keep
+  // the full compilation unit intact until the tokenizer models them.
+  if (/"{3,}/.test(code)) return code
 
   let result = code
 
@@ -83,7 +87,7 @@ function applyVariableRandomization(code) {
 
   for (const token of tokens) {
     if (token.type !== 'code') continue
-    const varPattern = /\b(?:var|int|string|byte\[\]|bool|double|float|long|char|object)\s+([a-zA-Z_][a-zA-Z0-9_]*)/g
+    const varPattern = /\b(?:var|int|string|byte\[\]|bool|double|float|long|char|object)\s+([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\s*\()/g
     let match
     while ((match = varPattern.exec(token.value)) !== null) {
       const varName = match[1]
@@ -91,6 +95,15 @@ function applyVariableRandomization(code) {
         varMap[varName] = randomVarName('camelCase')
       }
     }
+  }
+
+  // A regex-only renamer cannot safely distinguish user-defined members from
+  // locals in every valid C# construct. If a collected identifier is accessed
+  // through an object (this.value, obj.Member), keep it unchanged rather than
+  // renaming only its declaration or an unrelated use.
+  for (const varName of Object.keys(varMap)) {
+    const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (new RegExp(`\\.\\s*${escaped}\\b`).test(code)) delete varMap[varName]
   }
 
   if (Object.keys(varMap).length === 0) return code
@@ -114,12 +127,12 @@ function applyVariableRandomization(code) {
     }
     // Rename inside C# interpolated strings $"..."
     // {varName} expressions inside $"..." need their identifiers renamed
-    if (token.type === 'string' && (token.quoteChar === '$"' || token.prefix === '$')) {
+    if (token.type === 'string' && (token.quoteChar === '$"' || token.prefix?.includes('$'))) {
       // Rename identifiers inside {expr} placeholders, leave static text alone
       const newValue = token.value.replace(/\{([^}]+)\}/g, (match, expr) => {
         return '{' + renameVarsInText(expr) + '}'
       })
-      return { ...token, value: newValue, raw: `$"${newValue}"` }
+      return { ...token, value: newValue, raw: `${token.quoteChar}${newValue}"` }
     }
     return token
   })
@@ -151,7 +164,8 @@ function applyStringEncoding(code) {
 
   const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
     if (quoteChar === '@"') return `@"${content}"`
-    if (quoteChar === "'" && content.length <= 2) return `'${content}'`
+    if (quoteChar === '$@"' || quoteChar === '@$"') return `${quoteChar}${content}"`
+    if (quoteChar === "'") return `'${content}'`
 
     // C# interpolated string $"..." → String.Format(encoded, vars...)
     if (quoteChar === '$"' || prefix === '$') {
@@ -161,10 +175,12 @@ function applyStringEncoding(code) {
         let formatStr = ''
         for (const seg of segments) {
           if (seg.type === 'var') {
-            formatStr += `{${vars.length}}`
+            formatStr += `{${vars.length}${seg.format || ''}}`
             vars.push(seg.value) // raw expression e.g. "numberA"
           } else {
-            formatStr += seg.value
+            // String.Format treats braces as control characters. Braces that
+            // were escaped in the interpolated source must remain literal.
+            formatStr += seg.value.replaceAll('{', '{{').replaceAll('}', '}}')
           }
         }
         const encodedFormat = encodeStaticCS(formatStr)
@@ -187,13 +203,18 @@ function applyStringEncoding(code) {
 /* ── XOR String Encryption (interpolation-aware) ─────────── */
 
 function applyXorStringEncryption(code) {
-  const funcName = '_' + randomFuncName()
+  // Distinct prefixes guarantee that the generated method never has the same
+  // name as its containing class (which C# would parse as an invalid member).
+  const helperClassName = '_C' + randomFuncName()
+  const funcName = '_D' + randomFuncName()
+  const qualifiedFuncName = `${helperClassName}.${funcName}`
   let helperInjected = false
   const tokens = tokenize(code, 'csharp')
 
   const transformed = transformStrings(tokens, (content, quoteChar, prefix) => {
     if (quoteChar === '@"') return `@"${content}"`
-    if (quoteChar === "'" && content.length <= 2) return `'${content}'`
+    if (quoteChar === '$@"' || quoteChar === '@$"') return `${quoteChar}${content}"`
+    if (quoteChar === "'") return `'${content}'`
     if (content.length < 3) return quoteChar === '$"' ? `$"${content}"` : `"${content}"`
 
     // Interpolated $"..." → String.Format(XOR_encoded, vars...)
@@ -204,14 +225,14 @@ function applyXorStringEncryption(code) {
         let formatStr = ''
         for (const seg of segments) {
           if (seg.type === 'var') {
-            formatStr += `{${vars.length}}`
+            formatStr += `{${vars.length}${seg.format || ''}}`
             vars.push(seg.value)
           } else {
-            formatStr += seg.value
+            formatStr += seg.value.replaceAll('{', '{{').replaceAll('}', '}}')
           }
         }
         if (formatStr.length >= 3) {
-          const xor = xorEncryptForLanguage(formatStr, 'csharp', funcName)
+          const xor = xorEncryptForLanguage(formatStr, 'csharp', qualifiedFuncName)
           if (!helperInjected) helperInjected = true
           return `string.Format(${xor.inline}, ${vars.join(', ')})`
         }
@@ -219,7 +240,7 @@ function applyXorStringEncryption(code) {
       }
     }
 
-    const xor = xorEncryptForLanguage(content, 'csharp', funcName)
+    const xor = xorEncryptForLanguage(content, 'csharp', qualifiedFuncName)
     if (!helperInjected) helperInjected = true
     return xor.inline
   })
@@ -227,15 +248,10 @@ function applyXorStringEncryption(code) {
   let result = tokensToCode(transformed)
   if (helperInjected) {
     const helper = xorEncryptForLanguage('x', 'csharp', funcName).helper
-    const classInsert = result.indexOf('{')
-    if (classInsert !== -1) {
-      const secondBrace = result.indexOf('{', classInsert + 1)
-      if (secondBrace !== -1) {
-        result = result.substring(0, secondBrace) + '{\n    ' + helper + '\n' + result.substring(secondBrace + 1)
-      } else {
-        result = result.substring(0, classInsert + 1) + '\n    ' + helper + '\n' + result.substring(classInsert + 1)
-      }
-    }
+    // A top-level helper is reachable from every class in the compilation
+    // unit. Injecting into the "second brace" broke files without namespaces
+    // (inside the first method) and files with multiple classes.
+    result += `\ninternal static class ${helperClassName}\n{\n    ${helper.replace(/^static string /, 'internal static string ')}\n}\n`
   }
   return result
 }
@@ -246,24 +262,66 @@ function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
   const result = []
   let braceDepth = 0
+  let methodDepth = null
+  let pendingMethod = false
+
+  const stripNonCode = (line) => {
+    let output = ''
+    let quote = ''
+    let escaped = false
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]
+      if (!quote && ch === '/' && line[i + 1] === '/') break
+      if (escaped) { escaped = false; output += ' '; continue }
+      if (quote && ch === '\\') { escaped = true; output += ' '; continue }
+      if (ch === '"' || ch === "'") {
+        if (!quote) quote = ch
+        else if (quote === ch) quote = ''
+        output += ' '
+        continue
+      }
+      output += quote ? ' ' : ch
+    }
+    return output
+  }
+
+  const looksLikeMethod = (line) => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.endsWith(';') || /^(?:if|for|foreach|while|switch|catch|using|lock)\b/.test(trimmed)) return false
+    return /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\([^;]*\)\s*(?:where\b[^{}]*)?\{?\s*$/.test(trimmed)
+  }
 
   for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim()
-    // Track brace depth to know if we're inside a method body
-    for (const ch of trimmed) {
+    const masked = stripNonCode(lines[i])
+    const trimmed = masked.trim()
+    if (methodDepth === null && looksLikeMethod(masked)) pendingMethod = true
+
+    const beforeDepth = braceDepth
+    for (const ch of masked) {
       if (ch === '{') braceDepth++
       if (ch === '}') braceDepth--
+    }
+    if (pendingMethod && braceDepth > beforeDepth) {
+      methodDepth = braceDepth
+      pendingMethod = false
     }
 
     result.push(lines[i])
 
-    // Only inject inside method bodies (depth >= 2: namespace + class + method)
-    if (i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0 && braceDepth >= 2) {
-      if (isSafeForInjection(lines[i], 'csharp')) {
+    // Only inject after complete statements inside a method. This avoids
+    // landing between try and its brace, between switch labels, or after a
+    // terminator where declarations would be unreachable/invalid.
+    const safeStatement = trimmed.endsWith(';') &&
+      !/^(?:case\b|default\s*:|return\b|break\b|continue\b|throw\b|goto\b|yield\b)/.test(trimmed)
+    if (methodDepth !== null && braceDepth >= methodDepth && safeStatement &&
+        i > 0 && i % (4 + Math.floor(Math.random() * 3)) === 0) {
+      if (isSafeForInjection(masked, 'csharp')) {
         const indent = lines[i].match(/^(\s*)/)?.[1] || '        '
         result.push(indent + generateDeadCode('csharp'))
       }
     }
+
+    if (methodDepth !== null && braceDepth < methodDepth) methodDepth = null
   }
 
   return result.join('\n')
@@ -293,7 +351,9 @@ function applyAntiAnalysis(code) {
     }
   }
 
-  return '// Anti-analysis\n' + antiAnalysis + '\n' + code
+  // Unsupported entry-point shapes (for example int/async/top-level Main)
+  // are left intact instead of emitting statements at compilation-unit scope.
+  return code
 }
 
 /* ── AMSI/ETW In-Memory Patch ────────────────────────────── */
@@ -326,195 +386,13 @@ function applyAmsiEtwPatch(code) {
   return result
 }
 
-/* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
-
-function csJunk() {
-  const pool = [
-    () => `        var ${randomVarName('camelCase')} = (${Math.floor(Math.random()*999)} * ${Math.floor(Math.random()*99)} + ${Math.floor(Math.random()*9999)}) % 256;`,
-    () => `        var ${randomVarName('camelCase')} = BitConverter.GetBytes(${Math.floor(Math.random()*0xFFFFFF)});`,
-    () => `        var ${randomVarName('camelCase')} = "${Array.from({length: 6}, () => String.fromCharCode(65 + Math.floor(Math.random()*26))).join('')}";`,
-  ]
-  return pool[Math.floor(Math.random() * pool.length)]()
-}
-
-function csLoopJunk() {
-  const pool = [
-    () => `            var _ = (i * ${3 + Math.floor(Math.random()*17)} + ${Math.floor(Math.random()*255)}) % 256;`,
-    () => `            var _ = i ^ ${Math.floor(Math.random()*0xFF)};`,
-  ]
-  return pool[Math.floor(Math.random() * pool.length)]()
-}
-
-function csShuf(arr) {
-  const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }; return a
-}
+/* ── Semantic-preserving encryption pass ─────────────────── */
 
 function applyEncryptionWrapper(code) {
-  const m = Math.floor(Math.random() * 4)
-  switch (m) {
-    case 0: return csWrapperXorB64(code)
-    case 1: return csWrapperHexShift(code)
-    case 2: return csWrapperMultiXor(code)
-    case 3: return csWrapperByteRot(code)
-    default: return csWrapperXorB64(code)
-  }
-}
-
-function csWrapperXorB64(code) {
-  const key = randomXorKey(16)
-  const b64 = toBase64(code)
-  const xorData = Array.from(b64).map((c, i) => c.charCodeAt(0) ^ key[i % key.length])
-  const cn = randomFuncName(), mn = randomFuncName()
-  const kv = randomVarName('camelCase'), dv = randomVarName('camelCase')
-  const pv = randomVarName('camelCase')
-
-  const fieldOrder = csShuf([
-    `    static byte[] ${kv} = new byte[] {${key.join(', ')}};`,
-    `    static byte[] ${dv} = new byte[] {${xorData.join(', ')}};`,
-  ])
-
-  return `using System;
-using System.Text;
-
-class ${cn}
-{
-${fieldOrder.join('\n')}
-
-    static string ${mn}(byte[] d, byte[] k)
-    {
-        byte[] r = new byte[d.Length];
-        for (int i = 0; i < d.Length; i++)
-        {
-${csLoopJunk()}
-            r[i] = (byte)(d[i] ^ k[i % k.Length]);
-        }
-        return Encoding.ASCII.GetString(r);
-    }
-
-    static void Main()
-    {
-${csJunk()}
-${csJunk()}
-        string ${pv} = Encoding.UTF8.GetString(
-            Convert.FromBase64String(${mn}(${dv}, ${kv}))
-        );
-        Console.WriteLine(${pv});
-    }
-}
-`
-}
-
-function csWrapperHexShift(code) {
-  const shift = 3 + Math.floor(Math.random() * 25)
-  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
-  const cn = randomFuncName(), mn = randomFuncName()
-  const dv = randomVarName('camelCase'), sv = randomVarName('camelCase')
-  const rv = randomVarName('camelCase')
-
-  return `using System;
-using System.Text;
-
-class ${cn}
-{
-    static string ${dv} = "${hexStr}";
-    static int ${sv} = ${shift};
-
-    static string ${mn}(string h, int s)
-    {
-        var ${rv} = new StringBuilder();
-        for (int i = 0; i < h.Length; i += 2)
-        {
-${csLoopJunk()}
-            int b = Convert.ToInt32(h.Substring(i, 2), 16);
-            ${rv}.Append((char)((b - s + 256) % 256));
-        }
-        return ${rv}.ToString();
-    }
-
-    static void Main()
-    {
-${csJunk()}
-        Console.WriteLine(${mn}(${dv}, ${sv}));
-    }
-}
-`
-}
-
-function csWrapperMultiXor(code) {
-  const k1 = randomXorKey(16), k2 = randomXorKey(16)
-  const enc = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ k1[i % k1.length]) ^ k2[i % k2.length])
-  const cn = randomFuncName(), mn = randomFuncName()
-  const dv = randomVarName('camelCase'), k1v = randomVarName('camelCase'), k2v = randomVarName('camelCase')
-  const rv = randomVarName('camelCase')
-
-  const fields = csShuf([
-    `    static byte[] ${dv} = new byte[] {${enc.join(', ')}};`,
-    `    static byte[] ${k1v} = new byte[] {${k1.join(', ')}};`,
-    `    static byte[] ${k2v} = new byte[] {${k2.join(', ')}};`,
-  ])
-
-  return `using System;
-using System.Text;
-
-class ${cn}
-{
-${fields.join('\n')}
-
-    static string ${mn}(byte[] d, byte[] a, byte[] b)
-    {
-        var ${rv} = new StringBuilder();
-        for (int i = 0; i < d.Length; i++)
-        {
-${csLoopJunk()}
-            ${rv}.Append((char)((d[i] ^ b[i % b.Length]) ^ a[i % a.Length]));
-        }
-        return ${rv}.ToString();
-    }
-
-    static void Main()
-    {
-${csJunk()}
-${csJunk()}
-        Console.WriteLine(${mn}(${dv}, ${k1v}, ${k2v}));
-    }
-}
-`
-}
-
-function csWrapperByteRot(code) {
-  const rotN = 3 + Math.floor(Math.random() * 50)
-  const b64 = toBase64(code)
-  const rot = Array.from(b64).map(c => (c.charCodeAt(0) + rotN) % 256)
-  const cn = randomFuncName(), mn = randomFuncName()
-  const dv = randomVarName('camelCase'), nv = randomVarName('camelCase')
-  const rv = randomVarName('camelCase')
-
-  return `using System;
-using System.Text;
-
-class ${cn}
-{
-    static byte[] ${dv} = new byte[] {${rot.join(', ')}};
-    static int ${nv} = ${rotN};
-
-    static string ${mn}(byte[] d, int n)
-    {
-        var ${rv} = new StringBuilder();
-        for (int i = 0; i < d.Length; i++)
-        {
-${csLoopJunk()}
-            ${rv}.Append((char)((d[i] - n + 256) % 256));
-        }
-        return ${rv}.ToString();
-    }
-
-    static void Main()
-    {
-${csJunk()}
-        Console.WriteLine(Encoding.UTF8.GetString(
-            Convert.FromBase64String(${mn}(${dv}, ${nv}))
-        ));
-    }
-}
-`
+  // C# source cannot execute a decrypted source string without introducing a
+  // runtime compiler dependency. The previous wrappers therefore printed the
+  // source instead of running the program. Use the compile-time-safe string
+  // encryption pass so the produced program remains a normal executable with
+  // identical behavior.
+  return applyXorStringEncryption(code)
 }

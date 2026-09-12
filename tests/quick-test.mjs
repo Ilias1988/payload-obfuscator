@@ -1,5 +1,5 @@
 import { obfuscatePython } from '../src/engines/python.js'
-import { execSync, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -15,7 +15,7 @@ function test(name, code, layers) {
   const f = join(tmpdir(), `qt_${Date.now()}_${Math.random().toString(36).slice(2)}.py`)
   writeFileSync(f, obf)
   const r = spawnSync('python', [f], { timeout: 10000, encoding: 'utf-8', stdio: ['pipe','pipe','pipe'] })
-  try { unlinkSync(f) } catch{}
+  try { unlinkSync(f) } catch { /* Cleanup is best-effort. */ }
   if (r.status === 0) { pass++; console.log(`${G}✅${N} [${layers.join('+')}] ${name}`) }
   else { fail++; console.log(`${R}❌${N} [${layers.join('+')}] ${name}: ${(r.stderr||'').split('\n').filter(l=>l.trim()).slice(-2).join(' | ').slice(0,150)}`) }
 }

@@ -10,7 +10,7 @@ export default function Footer() {
             <Shield size={16} className="text-obf-red/60" />
             <span>Payload Obfuscator</span>
             <span className="text-dark-600">|</span>
-            <span className="text-dark-500 text-xs">Red Team Evasion Tool</span>
+            <span className="text-dark-500 text-xs">Browser-Based Code Obfuscator</span>
           </div>
 
           {/* Center */}
@@ -30,7 +30,7 @@ export default function Footer() {
               Website
             </a>
             <a
-              href="https://github.com/Ilias1988"
+              href="https://github.com/Ilias1988/payload-obfuscator"
               target="_blank"
               rel="noopener noreferrer"
               className="text-dark-400 hover:text-gray-200 transition-colors"

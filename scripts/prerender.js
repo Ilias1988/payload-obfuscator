@@ -104,8 +104,8 @@ async function prerender() {
       console.log('  📊 JSON-LD structured data found in rendered HTML')
     }
 
-    if (savedHTML.includes('Advanced Evasion Techniques')) {
-      console.log('  📝 SEO educational content found in rendered HTML')
+    if (savedHTML.includes('What Payload Obfuscator Does')) {
+      console.log('  📝 Product documentation found in rendered HTML')
     }
 
   } finally {

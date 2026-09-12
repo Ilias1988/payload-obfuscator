@@ -9,7 +9,7 @@
  * Supported: PowerShell, C#, Go
  */
 
-import { randomVarName } from '../utils/randomization'
+import { randomVarName } from '../utils/randomization.js'
 
 /* ══════════════════════════════════════════════════════════════
  *  SCOPE-AWARE BLOCK EXTRACTION
@@ -37,7 +37,7 @@ const COMPOUND_STARTS = {
  * Detect if a line continues a compound block (catch, finally, else, elif)
  */
 const CONTINUATION_KEYWORDS = {
-  powershell: /^\s*(catch|finally|elseif|else)\b/i,
+  powershell: /^\s*(catch|finally|elseif|else|while|until)\b/i,
   csharp: /^\s*(catch|finally|else)\b/,
   go: /^\s*(else)\b/,
 }
@@ -321,6 +321,21 @@ function shuffle(arr) {
  * @returns {string}
  */
 export function applyControlFlowFlattening(code, language) {
+  // PowerShell here-string terminators must remain at column zero. The CFF
+  // generator indents every block, so preserve the original script instead of
+  // emitting invalid PowerShell when a here-string is present.
+  if (language === 'powershell' && /@["'][ \t]*\r?\n/.test(code)) {
+    return code
+  }
+
+  // Advanced functions/classes/data sections have restricted child scopes.
+  // Keep them intact until CFF can operate on a real PowerShell AST.
+  if (language === 'powershell' &&
+      (/(^|\n)\s*(begin|process|end|clean|dynamicparam)\s*\{/i.test(code) ||
+       /(^|\n)\s*(class|enum|data)\s+/i.test(code))) {
+    return code
+  }
+
   // ── SAFE MODE CHECK ──────────────────────────
   // Verify braces are balanced before proceeding
   let totalBraces = 0
@@ -382,7 +397,7 @@ export function applyControlFlowFlattening(code, language) {
 /**
  * Detect C# method signatures
  */
-const CS_METHOD_SIG = /^\s*(public|private|protected|internal|static|\[|\s)*\s*(void|int|string|bool|byte|Task|async|var|object|double|float|long|char)\s+\w+\s*\(/
+const CS_VOID_METHOD_SIG = /^\s*(?:(?:public|private|protected|internal|static|virtual|override|sealed|new|unsafe|async|partial)\s+)*void\s+\w+\s*\(/
 
 function applyCSharpMethodBodyCFF(code) {
   const lines = code.split('\n')
@@ -391,10 +406,12 @@ function applyCSharpMethodBodyCFF(code) {
 
   while (i < lines.length) {
     const line = lines[i]
-    const trimmed = line.trim()
-
-    // Detect method signature (or static void Main)
-    const isMethodSig = CS_METHOD_SIG.test(line) || /^\s*static\s+void\s+Main\s*\(/.test(line)
+    // Only void methods can safely fall through after the generated state
+    // machine. Non-void, iterator, expression-bodied, and constructor members
+    // remain intact until this layer is backed by a real C# syntax tree.
+    const isSingleLineBody = line.includes('{') && countBracesDelta(line) <= 0
+    const isMethodSig = CS_VOID_METHOD_SIG.test(line) && !line.includes('=>') &&
+      !line.trimEnd().endsWith(';') && !isSingleLineBody
 
     if (isMethodSig) {
       // Collect the signature line(s) + opening brace
@@ -412,8 +429,6 @@ function applyCSharpMethodBodyCFF(code) {
           i++
           if (braceDepth > 0) break
         }
-      } else {
-        i = i // brace was on same line
       }
 
       const methodDepth = braceDepth // typically 1
@@ -433,42 +448,34 @@ function applyCSharpMethodBodyCFF(code) {
         i++
       }
 
-      // Try to flatten the body
-      const blocks = splitIntoBlocks(bodyLines, 'csharp')
-
-      if (blocks.length >= 3) {
-        // Flatten!
+      if (bodyLines.some((bodyLine) => bodyLine.trim().length > 0)) {
+        // Keep the complete original body in one lexical case scope. Splitting
+        // declarations and their uses across shuffled cases caused definite-
+        // assignment errors and split switch/try constructs into invalid C#.
         const stateVar = randomVarName('short')
-        const states = generateStateNumbers(blocks.length)
-        const exitState = states[states.length - 1]
-        const cases = blocks.map((block, idx) => ({
-          state: states[idx],
-          code: block,
-          nextState: idx < blocks.length - 1 ? states[idx + 1] : exitState,
-        }))
-        const shuffledCases = shuffle(cases)
+        const states = generateStateNumbers(1)
         const initialState = states[0]
-
-        // Add method header
-        result.push(...methodHeader)
-        // Add CFF inside the method (indented)
+        const exitState = states[1]
         const indent = (methodHeader[0].match(/^(\s*)/)?.[1] || '') + '    '
+
+        result.push(...methodHeader)
         result.push(`${indent}int ${stateVar} = ${initialState};`)
-        result.push(`${indent}while (true) {`)
-        result.push(`${indent}    switch (${stateVar}) {`)
-        for (const c of shuffledCases) {
-          result.push(`${indent}        case ${c.state}:`)
-          for (const cl of c.code.split('\n')) {
-            result.push(`${indent}            ${cl}`)
-          }
-          result.push(`${indent}            ${stateVar} = ${c.nextState}; break;`)
-        }
-        result.push(`${indent}        case ${exitState}: goto _exit;`)
+        result.push(`${indent}while (${stateVar} != ${exitState})`)
+        result.push(`${indent}{`)
+        result.push(`${indent}    switch (${stateVar})`)
+        result.push(`${indent}    {`)
+        result.push(`${indent}        case ${initialState}:`)
+        result.push(`${indent}        {`)
+        for (const bodyLine of bodyLines) result.push(`${indent}            ${bodyLine}`)
+        result.push(`${indent}            ${stateVar} = ${exitState};`)
+        result.push(`${indent}            break;`)
+        result.push(`${indent}        }`)
+        result.push(`${indent}        default:`)
+        result.push(`${indent}            ${stateVar} = ${exitState};`)
+        result.push(`${indent}            break;`)
         result.push(`${indent}    }`)
         result.push(`${indent}}`)
-        result.push(`${indent}_exit:;`)
       } else {
-        // Too few blocks — keep body as-is
         result.push(...methodHeader)
         result.push(...bodyLines)
       }

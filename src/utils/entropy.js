@@ -1,10 +1,10 @@
 /**
  * Shannon Entropy Calculator
  * Measures the randomness/information density of a string.
- * Used to estimate how "suspicious" obfuscated code looks to AV/EDR.
+ * Used to compare the information density of input and transformed output.
  *
  * Scale: 0 (uniform) → ~4.5 (normal code) → 6+ (encoded/encrypted)
- * Values > 6.5 are often flagged as packed/encrypted malware.
+ * Entropy alone cannot determine whether code is safe, malicious, or detectable.
  */
 
 /**
@@ -46,7 +46,7 @@ export function getEntropyClassification(entropy) {
     return {
       label: 'Low',
       color: '#10b981', // green
-      risk: 'Minimal detection risk — code appears natural',
+      risk: 'Low information density for this text sample',
       percentage,
     }
   }
@@ -54,7 +54,7 @@ export function getEntropyClassification(entropy) {
     return {
       label: 'Normal',
       color: '#06b6d4', // cyan
-      risk: 'Normal code entropy — unlikely to trigger alerts',
+      risk: 'Typical information density for many text and source samples',
       percentage,
     }
   }
@@ -62,7 +62,7 @@ export function getEntropyClassification(entropy) {
     return {
       label: 'Moderate',
       color: '#f59e0b', // amber
-      risk: 'Moderate entropy — some heuristic engines may inspect further',
+      risk: 'Moderate information density; compare with the original source',
       percentage,
     }
   }
@@ -70,20 +70,21 @@ export function getEntropyClassification(entropy) {
     return {
       label: 'High',
       color: '#f97316', // orange
-      risk: 'High entropy — resembles encoded/compressed data',
+      risk: 'High information density, often associated with encoded or compressed data',
       percentage,
     }
   }
   return {
     label: 'Very High',
     color: '#ef4444', // red
-    risk: 'Very high entropy — likely flagged as packed/encrypted malware',
+    risk: 'Very high information density; this metric alone is not a scanner result',
     percentage,
   }
 }
 
 /**
- * Calculate a rough detection score based on various heuristics
+ * Calculate a relative exposure estimate from configured layer weights.
+ * This is an explanatory UI metric, not a security scanner prediction.
  * @param {string} original - Original code
  * @param {string} obfuscated - Obfuscated code
  * @param {string} language - Language identifier
@@ -95,7 +96,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     return { score: 100, breakdown: [] }
   }
 
-  let score = 100 // Start at 100% detectable, reduce with each layer
+  let score = 100 // Baseline for the relative layer-weight model.
   const breakdown = []
 
   // 1. Variable randomization impact
@@ -105,7 +106,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Variable Randomization',
       impact,
-      description: 'Breaks static signature matching on known variable names',
+      description: 'Changes recognized identifier patterns',
     })
   }
 
@@ -116,7 +117,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'String Encoding',
       impact,
-      description: 'Hides suspicious string literals from pattern scanners',
+      description: 'Changes compatible string-literal representation',
     })
   }
 
@@ -127,7 +128,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Dead Code Injection',
       impact,
-      description: 'Alters control flow graph, confuses static analysis',
+      description: 'Adds non-functional statements at guarded locations',
     })
   }
 
@@ -138,7 +139,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Anti-Analysis',
       impact,
-      description: 'Sandbox detection and timing evasion techniques',
+      description: 'Adds environment-dependent timing and host checks',
     })
   }
 
@@ -149,7 +150,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Encryption Wrapper',
       impact,
-      description: 'AES/XOR envelope hides entire payload structure',
+      description: 'Adds a runtime wrapper and changes visible source structure',
     })
   }
 
@@ -160,7 +161,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'XOR String Encryption',
       impact,
-      description: 'Runtime XOR decryption of string literals evades static scanners',
+      description: 'Reconstructs compatible string literals at runtime',
     })
   }
 
@@ -171,7 +172,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Control Flow Flattening',
       impact,
-      description: 'Switch-based dispatch obscures program logic from decompilers',
+      description: 'Restructures supported code with a state-machine pattern',
     })
   }
 
@@ -182,11 +183,11 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'AMSI/ETW Memory Patch',
       impact,
-      description: 'In-memory patches disable runtime scanning and event tracing',
+      description: 'Adds a security-sensitive Windows-only lab patch',
     })
   }
 
-  // 6. Entropy penalty — high entropy increases detection
+  // 6. Entropy adjustment in the relative model.
   const entropy = calculateEntropy(obfuscated)
   if (entropy > 6.0) {
     const penalty = Math.min(Math.round((entropy - 6.0) * 8), 15)
@@ -194,7 +195,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'High Entropy Penalty',
       impact: penalty,
-      description: `Entropy of ${entropy.toFixed(2)} may trigger heuristic detection`,
+      description: `Entropy is ${entropy.toFixed(2)}; compare this with the original source`,
     })
   }
 
@@ -206,7 +207,7 @@ export function calculateDetectionScore(original, obfuscated, language, activeLa
     breakdown.push({
       name: 'Size Inflation Penalty',
       impact: penalty,
-      description: `${sizeRatio.toFixed(1)}x size increase may look suspicious`,
+      description: `${sizeRatio.toFixed(1)}x increase adds runtime and review complexity`,
     })
   }
 

@@ -14,7 +14,7 @@ export default function Header() {
               Payload Obfuscator
             </h1>
             <p className="text-[10px] text-dark-400 leading-tight">
-              Red Team Evasion Tool
+              Multi-Language Source Transformer
             </p>
           </div>
         </div>
@@ -29,7 +29,7 @@ export default function Header() {
             Learn More
           </a>
           <a
-            href="https://github.com/Ilias1988"
+            href="https://github.com/Ilias1988/payload-obfuscator"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-dark-300 hover:text-gray-100 bg-dark-800/50 border border-dark-700/50 rounded-md hover:border-dark-600 transition-colors"

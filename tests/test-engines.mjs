@@ -22,7 +22,7 @@ import { tmpdir } from 'os'
 const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', B = '\x1b[36m', D = '\x1b[2m', N = '\x1b[0m'
 
 // ─── Stats ─────────────────────────────────────
-let total = 0, passed = 0, failed = 0, skipped = 0
+let total = 0, passed = 0, failed = 0
 const failures = []
 
 // ─── Test Payloads ─────────────────────────────
@@ -449,7 +449,7 @@ const HAS_PWSH = detectRuntime('pwsh')
 const HAS_BASH = detectRuntime('bash')
 
 const TEMP_DIR = join(tmpdir(), 'payload-obfuscator-tests')
-try { mkdirSync(TEMP_DIR, { recursive: true }) } catch {}
+try { mkdirSync(TEMP_DIR, { recursive: true }) } catch { /* Existing directory is acceptable. */ }
 
 function execPython(code, timeoutMs = 15000) {
   const file = join(TEMP_DIR, `test_${Date.now()}_${Math.random().toString(36).slice(2)}.py`)
@@ -462,7 +462,7 @@ function execPython(code, timeoutMs = 15000) {
     })
     return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr, code: result.status }
   } finally {
-    try { unlinkSync(file) } catch {}
+    try { unlinkSync(file) } catch { /* Cleanup is best-effort. */ }
   }
 }
 
@@ -477,7 +477,7 @@ function execPwsh(code, timeoutMs = 15000) {
     })
     return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr, code: result.status }
   } finally {
-    try { unlinkSync(file) } catch {}
+    try { unlinkSync(file) } catch { /* Cleanup is best-effort. */ }
   }
 }
 
@@ -492,7 +492,7 @@ function execBash(code, timeoutMs = 15000) {
     })
     return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr, code: result.status }
   } finally {
-    try { unlinkSync(file) } catch {}
+    try { unlinkSync(file) } catch { /* Cleanup is best-effort. */ }
   }
 }
 

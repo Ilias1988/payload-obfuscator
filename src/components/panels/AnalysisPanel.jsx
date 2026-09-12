@@ -5,7 +5,7 @@ export default function AnalysisPanel({ analysis }) {
   const { detectionScore } = analysis
   const hasOutput = analysis.outputSize > 0
 
-  // Detection score color
+  // Lower values reflect the configured layer weighting, not a scanner result.
   const getScoreColor = (score) => {
     if (score <= 20) return '#10b981' // green - very low detection
     if (score <= 40) return '#06b6d4' // cyan
@@ -31,7 +31,7 @@ export default function AnalysisPanel({ analysis }) {
         <div className="flex items-center justify-between">
           <span className="text-xs text-dark-400 flex items-center gap-1">
             <ShieldAlert size={12} />
-            Detection Probability
+            Relative Exposure Estimate
           </span>
           <span
             className="text-lg font-bold font-mono"
@@ -52,6 +52,12 @@ export default function AnalysisPanel({ analysis }) {
             }}
           />
         </div>
+
+        {hasOutput && (
+          <p className="text-[10px] leading-relaxed text-dark-500">
+            Lower reflects configured layer weights. This is not an antivirus or EDR scan.
+          </p>
+        )}
 
         {/* Breakdown */}
         {hasOutput && detectionScore.breakdown.length > 0 && (

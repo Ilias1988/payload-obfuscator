@@ -13,21 +13,12 @@
  * Supported: PowerShell, C#
  */
 
-import { randomVarName, randomFuncName } from '../utils/randomization'
-import { toBase64 } from '../utils/encoding'
+import { randomVarName, randomFuncName } from '../utils/randomization.js'
+import { toBase64 } from '../utils/encoding.js'
 
 /* ══════════════════════════════════════════════════════════════
  *  HELPERS
  * ══════════════════════════════════════════════════════════════ */
-
-function shuffle(arr) {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)] }
 
@@ -148,9 +139,7 @@ export function generatePowerShellEtwPatch() {
 
   const ntdllStr = obfuscateStringPS('ntdll.dll')
   const etwFuncStr = obfuscateStringPS('EtwEventWrite')
-  const dllImport = obfuscateStringPS('kernel32.dll')
-
-  // Build P/Invoke signature with obfuscated DllImport string
+  // Build the P/Invoke signature used by the generated block.
   const lines = [
     `# ETW blind (P/Invoke)`,
     psJunk(),

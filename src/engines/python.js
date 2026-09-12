@@ -9,9 +9,9 @@
  * - Unicode → force Base64
  */
 
-import { toBase64, xorEncryptForLanguage } from '../utils/encoding'
-import { randomVarName, randomFuncName, generateDeadCode, randomXorKey } from '../utils/randomization'
-import { tokenize, tokensToCode, transformStrings, transformCodeOnly, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser'
+import { toBase64, xorEncryptForLanguage } from '../utils/encoding.js'
+import { randomVarName, generateDeadCode, randomXorKey } from '../utils/randomization.js'
+import { tokenize, hasUnicode, hasInterpolation, splitInterpolatedString, isSafeForInjection } from '../utils/parser.js'
 
 export function obfuscatePython(code, layers = []) {
   if (!code || code.trim().length === 0) return ''
@@ -38,6 +38,178 @@ export function obfuscatePython(code, layers = []) {
   }
 
   return result
+}
+
+function tokenRaw(token) {
+  if (token.type !== 'string') return token.value
+  return token.raw || `${token.prefix || ''}${token.quoteChar}${token.value}${token.quoteChar}`
+}
+
+function maskPythonNonCode(code) {
+  return tokenize(code, 'python').map((token) => {
+    if (token.type === 'code') return token.value
+    return tokenRaw(token).replace(/[^\r\n]/g, ' ')
+  }).join('')
+}
+
+function mapPythonFStringExpressions(content, transform) {
+  let output = ''
+  let found = false
+
+  for (let i = 0; i < content.length;) {
+    if (content[i] === '{' && content[i + 1] === '{') {
+      output += '{{'
+      i += 2
+      continue
+    }
+    if (content[i] === '}' && content[i + 1] === '}') {
+      output += '}}'
+      i += 2
+      continue
+    }
+    if (content[i] !== '{') {
+      output += content[i++]
+      continue
+    }
+
+    let depth = 1
+    let quote = ''
+    let escaped = false
+    let j = i + 1
+    for (; j < content.length; j++) {
+      const ch = content[j]
+      if (quote) {
+        if (escaped) escaped = false
+        else if (ch === '\\') escaped = true
+        else if (ch === quote) quote = ''
+        continue
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch
+        continue
+      }
+      if (ch === '{') depth++
+      else if (ch === '}' && --depth === 0) break
+    }
+
+    if (depth !== 0) {
+      output += content.slice(i)
+      break
+    }
+
+    found = true
+    output += `{${transform(content.slice(i + 1, j))}}`
+    i = j + 1
+  }
+
+  return { content: output, found }
+}
+
+function hasTopLevelFStringFormatting(expression) {
+  let depth = 0
+  let quote = ''
+  let escaped = false
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i]
+    if (quote) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; continue }
+    if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue }
+    if (depth === 0 && (ch === ':' || ch === '!')) return true
+    if (depth === 0 && ch === '=') {
+      const prev = expression[i - 1] || ''
+      const next = expression[i + 1] || ''
+      if (!'=!<>:'.includes(prev) && next !== '=') return true
+    }
+  }
+  return false
+}
+
+function isComplexPythonFString(content) {
+  let complex = false
+  const mapped = mapPythonFStringExpressions(content, (expression) => {
+    if (hasTopLevelFStringFormatting(expression)) complex = true
+    return expression
+  })
+  return !mapped.found || complex
+}
+
+function isPythonPatternLiteral(tokens, index) {
+  const before = tokens.slice(0, index).map(tokenRaw).join('')
+  const currentLine = before.slice(Math.max(before.lastIndexOf('\n'), before.lastIndexOf('\r')) + 1)
+  return /^\s*case\b/.test(currentLine)
+}
+
+function isPotentialPythonDocstring(tokens, index) {
+  const before = tokens.slice(0, index).map(tokenRaw).join('')
+  const lineStart = Math.max(before.lastIndexOf('\n'), before.lastIndexOf('\r')) + 1
+  if (before.slice(lineStart).trim() !== '') return false
+
+  const priorLines = before.slice(0, lineStart).split(/\r?\n/)
+  while (priorLines.length > 0) {
+    const line = priorLines.pop().trim()
+    if (!line || line.startsWith('#')) continue
+    return line.endsWith(':')
+  }
+  return true
+}
+
+function insertPythonPreamble(code, preamble) {
+  const lines = code.split(/(?<=\n)/)
+  let index = 0
+
+  if (lines[index]?.startsWith('#!')) index++
+  for (let i = 0; i < Math.min(2, lines.length); i++) {
+    if (/coding[:=]\s*[-\w.]+/.test(lines[i]) && index <= i) index = i + 1
+  }
+
+  while (index < lines.length && /^\s*(?:#.*)?(?:\r?\n)?$/.test(lines[index])) index++
+
+  const remaining = lines.slice(index).join('')
+  const docMatch = /^(\s*)(?:[rRuU]?)("""|'''|"|')/.exec(remaining)
+  if (docMatch) {
+    const quote = docMatch[2]
+    const openAt = docMatch.index + docMatch[0].length - quote.length
+    let closeAt
+    if (quote.length === 3) {
+      closeAt = remaining.indexOf(quote, openAt + 3)
+    } else {
+      closeAt = openAt + 1
+      while (closeAt < remaining.length) {
+        if (remaining[closeAt] === '\\') closeAt += 2
+        else if (remaining[closeAt] === quote) break
+        else closeAt++
+      }
+    }
+    if (closeAt !== -1) {
+      const consumed = remaining.slice(0, closeAt + quote.length)
+      index += (consumed.match(/\n/g) || []).length
+      if (lines[index] && !lines[index].endsWith('\n')) index++
+      else if (lines[index]) index++
+    }
+  }
+
+  while (index < lines.length) {
+    const trimmed = lines[index].trim()
+    if (!trimmed || trimmed.startsWith('#')) { index++; continue }
+    if (!/^from\s+__future__\s+import\b/.test(trimmed)) break
+    let balance = 0
+    do {
+      const line = lines[index++] || ''
+      for (const ch of line) {
+        if (ch === '(') balance++
+        else if (ch === ')') balance--
+      }
+    } while (index < lines.length && (balance > 0 || lines[index - 1].trimEnd().endsWith('\\')))
+  }
+
+  lines.splice(index, 0, preamble.endsWith('\n') ? preamble : preamble + '\n')
+  return lines.join('')
 }
 
 /* ── Variable Randomization (context-aware) ──────────────── */
@@ -76,35 +248,89 @@ function applyVariableRandomization(code) {
            !name.startsWith('__') && !/^[A-Z_]+$/.test(name)
   }
 
-  // ── Phase 1: Collect all variable definitions from CODE tokens ──
+  // ── Phase 1: Collect assignment targets from masked Python code ──
   const tokens = tokenize(code, 'python')
   const varMap = {}
 
-  for (const token of tokens) {
-    if (token.type !== 'code') continue
+  const addVariable = (name) => {
+    if (isRenamable(name) && !varMap[name]) varMap[name] = randomVarName('snake_case')
+  }
+  const collectTargets = (target) => {
+    const withoutAnnotation = target.replace(/:\s*[^,]+$/g, '')
+    const unwrapped = withoutAnnotation.replace(/[()[\]]/g, ' ')
+    if (!/^\s*[a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*\s*$/.test(unwrapped)) return
+    for (const name of unwrapped.split(',').map((part) => part.trim())) addVariable(name)
+  }
 
-    // Pattern 1: varname = (but NOT ==, NOT obj.attr =)
-    const varPattern = /(?<!\.)(?<!\w)\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=[^=]/g
-    let match
-    while ((match = varPattern.exec(token.value)) !== null) {
-      const v = match[1]
-      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
-    }
+  const maskedCode = maskPythonNonCode(code)
 
-    // Pattern 2: "as varName" (with/except blocks)
-    const asPattern = /\bas\s+([a-zA-Z_][a-zA-Z0-9_]*)\b/g
-    while ((match = asPattern.exec(token.value)) !== null) {
-      const v = match[1]
-      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
-    }
+  // Runtime name lookup cannot be updated safely without a Python AST and scope
+  // analysis. Prefer a safe no-op to silently changing reflected identifiers.
+  if (/\b(?:globals|locals|vars|exec|eval|compile)\s*\(/.test(maskedCode)) return code
 
-    // Pattern 3: "for varName in" (loop variables)
-    const forPattern = /\bfor\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\b/g
-    while ((match = forPattern.exec(token.value)) !== null) {
-      const v = match[1]
-      if (isRenamable(v) && !varMap[v]) varMap[v] = randomVarName('snake_case')
+  for (const line of maskedCode.split(/\r?\n/)) {
+    for (const statement of line.split(';')) {
+      const assignment = /^\s*(.+?)\s*(?:\+|-|\*|\/|\/\/|%|&|\||\^|>>|<<|@)?=(?!=)/.exec(statement)
+      if (assignment) collectTargets(assignment[1])
     }
   }
+
+  let match
+  const walrusPattern = /\b([a-zA-Z_]\w*)\s*:=/g
+  while ((match = walrusPattern.exec(maskedCode)) !== null) addVariable(match[1])
+
+  const asPattern = /\bas\s+([a-zA-Z_]\w*)\b/g
+  while ((match = asPattern.exec(maskedCode)) !== null) addVariable(match[1])
+
+  const forPattern = /\bfor\s+(.+?)\s+in\b/g
+  while ((match = forPattern.exec(maskedCode)) !== null) {
+    const target = match[1].split(/\r?\n/).pop()
+    collectTargets(target)
+  }
+
+  // Names used as parameters, imported symbols, or attributes are API-facing.
+  // A global regex rename cannot safely distinguish their individual scopes.
+  const protectedNames = new Set()
+  const parameterPattern = /\b(?:async\s+)?def\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/g
+  while ((match = parameterPattern.exec(maskedCode)) !== null) {
+    for (const parameter of match[1].split(',')) {
+      const name = parameter.trim().replace(/^\*{0,2}/, '').match(/^[a-zA-Z_]\w*/)?.[0]
+      if (name) protectedNames.add(name)
+    }
+  }
+  const attributePattern = /\.\s*([a-zA-Z_]\w*)\b/g
+  while ((match = attributePattern.exec(maskedCode)) !== null) protectedNames.add(match[1])
+
+  // Protect keyword/default labels inside parentheses even when a call spans
+  // several lines or string tokens. Per-token replacement does not retain the
+  // opening parenthesis, so this must be collected from the complete mask.
+  let parenDepth = 0
+  for (let i = 0; i < maskedCode.length;) {
+    const ch = maskedCode[i]
+    if (ch === '(') { parenDepth++; i++; continue }
+    if (ch === ')') { parenDepth = Math.max(0, parenDepth - 1); i++; continue }
+    if (parenDepth > 0 && /[a-zA-Z_]/.test(ch)) {
+      let end = i + 1
+      while (end < maskedCode.length && /[a-zA-Z0-9_]/.test(maskedCode[end])) end++
+      let after = end
+      while (after < maskedCode.length && /\s/.test(maskedCode[after])) after++
+      if (maskedCode[after] === '=' && maskedCode[after + 1] !== '=') {
+        protectedNames.add(maskedCode.slice(i, end))
+      }
+      i = end
+      continue
+    }
+    i++
+  }
+
+  const fromImportPattern = /^\s*from\s+[^\r\n]+?\s+import\s+([^\r\n]+)/gm
+  while ((match = fromImportPattern.exec(maskedCode)) !== null) {
+    for (const imported of match[1].split(',')) {
+      const names = imported.trim().match(/^([a-zA-Z_]\w*)(?:\s+as\s+([a-zA-Z_]\w*))?$/)
+      if (names) protectedNames.add(names[2] || names[1])
+    }
+  }
+  for (const name of protectedNames) delete varMap[name]
 
   if (Object.keys(varMap).length === 0) return code
 
@@ -115,7 +341,20 @@ function applyVariableRandomization(code) {
     let result = text
     for (const varName of sortedVars) {
       const regex = new RegExp('(?<!\\.)\\b' + varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g')
-      result = result.replace(regex, varMap[varName])
+      result = result.replace(regex, (matched, offset, source) => {
+        const after = source.slice(offset + matched.length)
+        if (/^\s*=(?!=)/.test(after)) {
+          const lineStart = Math.max(source.lastIndexOf('\n', offset), source.lastIndexOf('\r', offset)) + 1
+          const before = source.slice(lineStart, offset)
+          let parenDepth = 0
+          for (const ch of before) {
+            if (ch === '(') parenDepth++
+            else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1)
+          }
+          if (parenDepth > 0) return matched
+        }
+        return varMap[varName]
+      })
     }
     return result
   }
@@ -126,10 +365,14 @@ function applyVariableRandomization(code) {
       return { ...token, value: renameVarsIn(token.value) }
     }
 
-    // F-STRING: rename variables ANYWHERE inside {expr} interpolation expressions
+    // F-STRING: rename only identifiers inside interpolation expressions.
+    // Static text and quoted dictionary keys must remain untouched.
     if (token.type === 'string' && (token.prefix || '').toLowerCase().includes('f')) {
-      // Apply the same renaming as code tokens — word boundaries prevent false matches
-      const newContent = renameVarsIn(token.value)
+      const newContent = mapPythonFStringExpressions(token.value, (expression) => {
+        return tokenize(expression, 'python').map((part) => {
+          return part.type === 'code' ? renameVarsIn(part.value) : tokenRaw(part)
+        }).join('')
+      }).content
       const newRaw = (token.prefix || '') + token.quoteChar + newContent + token.quoteChar
       return { ...token, value: newContent, raw: newRaw }
     }
@@ -139,8 +382,7 @@ function applyVariableRandomization(code) {
 
   // Reconstruct code from tokens
   return result.map((t) => {
-    if (t.type === 'string') return t.raw || `${t.prefix || ''}${t.quoteChar}${t.value}${t.quoteChar}`
-    return t.value
+    return tokenRaw(t)
   }).join('')
 }
 
@@ -181,7 +423,7 @@ function applyStringEncoding(code) {
   const tokens = tokenize(code, 'python')
 
   // Mark transformed strings so we can fix implicit concatenation
-  const transformed = tokens.map((token) => {
+  const transformed = tokens.map((token, index) => {
     if (token.type !== 'string') return token
     if (token.value.length < 2) return token
 
@@ -194,6 +436,11 @@ function applyStringEncoding(code) {
       return token // keep as-is
     }
 
+    // Preserve literals whose exact syntactic form carries meaning.
+    if (content.includes('\\') || isPythonPatternLiteral(tokens, index) || isPotentialPythonDocstring(tokens, index)) {
+      return token
+    }
+
     // b-strings: keep as bytes literal (don't encode)
     const lowerPrefix = prefix.toLowerCase()
     if (lowerPrefix === 'b' || lowerPrefix === 'br' || lowerPrefix === 'rb') {
@@ -203,6 +450,7 @@ function applyStringEncoding(code) {
     let encoded
     // F-STRINGS: Deconstruct into concatenation (encode static, keep vars)
     const isFString = lowerPrefix.includes('f')
+    if (isFString && isComplexPythonFString(content)) return token
     if (isFString && hasInterpolation(content, 'python')) {
       const segments = splitInterpolatedString(content, 'python')
       const parts = segments.map(seg => {
@@ -269,7 +517,7 @@ function applyXorStringEncryption(code) {
 
   // Manual token processing (same pattern as applyStringEncoding)
   // to handle implicit string concatenation with + insertion
-  const transformed = tokens.map((token) => {
+  const transformed = tokens.map((token, index) => {
     if (token.type !== 'string') return token
     if (token.value.length < 2) return token
 
@@ -278,12 +526,14 @@ function applyXorStringEncryption(code) {
     const prefix = token.prefix || ''
 
     if (quoteChar === '"""' || quoteChar === "'''") return token
+    if (content.includes('\\') || isPythonPatternLiteral(tokens, index) || isPotentialPythonDocstring(tokens, index)) return token
     const lp = prefix.toLowerCase()
     if (lp === 'b' || lp === 'br' || lp === 'rb') return token
     if (content.length < 3) return token // keep short strings as-is
 
     let encoded
     const isFString = lp.includes('f')
+    if (isFString && isComplexPythonFString(content)) return token
     if (isFString && hasInterpolation(content, 'python')) {
       const segments = splitInterpolatedString(content, 'python')
       const parts = segments.map(seg => {
@@ -327,7 +577,7 @@ function applyXorStringEncryption(code) {
 
   if (helperInjected) {
     const helper = xorEncryptForLanguage('x', 'python', funcName).helper
-    output = helper + '\n' + output
+    output = insertPythonPreamble(output, helper + '\n')
   }
   return output
 }
@@ -336,6 +586,7 @@ function applyXorStringEncryption(code) {
 
 function applyDeadCodeInjection(code) {
   const lines = code.split('\n')
+  const maskedLines = maskPythonNonCode(code).split('\n')
   const result = []
 
   // Track open parens/brackets/braces for multi-line expression detection
@@ -343,11 +594,12 @@ function applyDeadCodeInjection(code) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const trimmed = line.trim()
+    const maskedLine = maskedLines[i] || ''
+    const trimmed = maskedLine.trim()
     result.push(line)
 
     // Count open/close brackets to detect multi-line expressions
-    for (const ch of trimmed) {
+    for (const ch of maskedLine) {
       if (ch === '(' || ch === '[' || ch === '{') openParens++
       if (ch === ')' || ch === ']' || ch === '}') openParens = Math.max(0, openParens - 1)
     }
@@ -365,10 +617,14 @@ function applyDeadCodeInjection(code) {
     if (trimmed.startsWith('@')) continue
 
     if (i > 0 && i % (3 + Math.floor(Math.random() * 3)) === 0) {
-      if (isSafeForInjection(line, 'python')) {
+      if (isSafeForInjection(maskedLine, 'python')) {
         // Match indentation of current line
         const indent = line.match(/^(\s*)/)?.[1] || ''
-        result.push(indent + generateDeadCode('python'))
+        const injected = generateDeadCode('python')
+          .split('\n')
+          .map((injectedLine) => indent + injectedLine)
+          .join('\n')
+        result.push(injected)
       }
     }
   }
@@ -383,7 +639,7 @@ function applyAntiAnalysis(code) {
   const v2 = randomVarName('snake_case')
   const sleepSec = 1 + Math.floor(Math.random() * 4)
 
-  return `import time as ${v1}
+  const preamble = `import time as ${v1}
 import os as ${v2}
 # Anti-analysis checks
 if ${v2}.cpu_count() is not None and ${v2}.cpu_count() < 2:
@@ -395,8 +651,8 @@ try:
         ${v2}._exit(0)
 except Exception:
     pass
-
-${code}`
+`
+  return insertPythonPreamble(code, preamble)
 }
 
 /* ── Polymorphic Encryption Wrapper (v4.5) ───────────────── */
@@ -496,7 +752,10 @@ ${loopJunk2}
 /* Method 2: Hex-Shift */
 function pyWrapperHexShift(code) {
   const shift = 3 + Math.floor(Math.random() * 25)
-  const hexStr = Array.from(code).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
+  // Transform Base64 ASCII rather than JavaScript UTF-16 code units.
+  // This preserves non-BMP Unicode such as emoji on every wrapper variant.
+  const b64 = toBase64(code)
+  const hexStr = Array.from(b64).map(c => ((c.charCodeAt(0) + shift) % 256).toString(16).padStart(2, '0')).join('')
 
   const dv = randomVarName('snake_case')
   const sv = randomVarName('snake_case')
@@ -517,14 +776,15 @@ ${generatePyLoopJunk(iv)}
     generatePyJunk(),
   ])
 
-  return [...initParts, '', funcBody, '', stealthExec(`${fv}(${dv}, ${sv})`)].join('\n') + '\n'
+  return [...initParts, '', funcBody, '', stealthExec(`getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${sv})).decode("utf-8")`)].join('\n') + '\n'
 }
 
 /* Method 3: Multi-XOR (2-key chain) */
 function pyWrapperMultiXor(code) {
   const key1 = randomXorKey(16)
   const key2 = randomXorKey(16)
-  const encoded = Array.from(code).map((c, i) => (c.charCodeAt(0) ^ key1[i % key1.length]) ^ key2[i % key2.length])
+  const b64 = toBase64(code)
+  const encoded = Array.from(b64).map((c, i) => (c.charCodeAt(0) ^ key1[i % key1.length]) ^ key2[i % key2.length])
 
   const dv = randomVarName('snake_case')
   const k1v = randomVarName('snake_case')
@@ -548,7 +808,7 @@ ${generatePyLoopJunk(iv)}
     generatePyJunk(),
   ])
 
-  return [...initParts, '', fixedFunc, '', stealthExec(`${fv}(${dv}, ${k1v}, ${k2v})`)].join('\n') + '\n'
+  return [...initParts, '', fixedFunc, '', stealthExec(`getattr(__import__("base64"), "b64decode")(${fv}(${dv}, ${k1v}, ${k2v})).decode("utf-8")`)].join('\n') + '\n'
 }
 
 /* Method 4: Byte Rotation */

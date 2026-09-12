@@ -59,7 +59,7 @@ export default function useObfuscator() {
       if (containsUnicode(inputCode) && !activeLayers.includes('encode')) {
         setWarnings((prev) => [
           ...prev,
-          'Input contains Unicode/Greek characters. Enable "String Encoding" to safely handle them via Base64.',
+          'Input contains Unicode characters. Consider "String Encoding" and verify the generated output in the target runtime.',
         ])
       }
 
